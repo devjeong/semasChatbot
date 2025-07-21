@@ -1,0 +1,55 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
+    <id>org.dev.semasChatbot</id>
+
+    <!-- Public plugin name should be written in Title Case.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-name -->
+    <name>SemasChatbot</name>
+
+    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
+    <!--<vendor url="https://www.yourcompany.com">YourCompany</vendor>-->
+    <vendor>semasAIChatbot</vendor>
+
+    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-description -->
+        <description><![CDATA[
+    <h2>소진공 AI 챗봇 플러그인</h2>
+    <p>IDE에 내장된 AI 챗봇을 통해 개발 생산성을 향상시키세요.</p>
+    <br>
+    <p><b>주요 기능:</b></p>
+    <ul>
+      <li><b>지능형 코드 분석 및 응답:</b> 코드에 대해 궁금한 점을 질문하거나 일반적인 대화를 나눌 수 있습니다.</li>
+      <li><b>코드 수정 및 리팩토링:</b> "이 함수에 주석 추가해줘" 또는 "이 코드 개선해줘" 와 같은 자연어 명령으로 코드를 쉽게 수정할 수 있습니다.</li>
+      <li><b>순차적 변경사항 적용:</b> 여러 군데를 수정해야 하는 경우, 각 변경 사항을 하나씩 미리보고 적용하거나 거절할 수 있어 안전하고 정교한 코드 관리가 가능합니다.</li>
+      <li><b>로컬 LLM 연동:</b> LM Studio와 같은 로컬 LLM 서버와 연동하여 동작하므로, 코드가 외부로 유출되지 않습니다.</li>
+    </ul>
+    <br>
+    <p>채팅창을 열고 AI와 대화하며 코딩 작업을 더 빠르고 효율적으로 만들어보세요!</p>
+    ]]></description>
+
+    <!-- Product and plugin compatibility requirements.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <depends>com.intellij.modules.platform</depends>
+
+    <!-- Extension points defined by the plugin.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
+    <extensions defaultExtensionNs="com.intellij">
+        <!--<projectService serviceImplementation="org.dev.semaschatbot.LmStudioClient" />-->
+        <!--<projectService serviceImplementation="org.dev.semaschatbot.ChatService" />-->
+        <toolWindow id="semasChatbot" anchor="right" factoryClass="org.dev.semaschatbot.LLMChatToolWindowFactory"/>
+        <notificationGroup id="LLMNoti" displayType="BALLOON"></notificationGroup>
+    </extensions>
+
+    <resource-bundle>META-INF.MessagesBundle</resource-bundle>
+
+    <actions>
+        <action id="org.dev.semaschatbot.SendSelectionToChat"
+                class="org.dev.semaschatbot.SendSelectionToChatAction"
+                text="Send Selection to Chat"
+                description="Sends the currently selected code to the Semas Chatbot.">
+            <add-to-group group-id="EditorPopupMenu" anchor="first"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="control shift C"/>
+        </action>
+    </actions>
+</idea-plugin>
