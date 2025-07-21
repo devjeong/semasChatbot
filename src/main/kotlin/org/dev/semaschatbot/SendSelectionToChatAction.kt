@@ -27,19 +27,26 @@ class SendSelectionToChatAction : AnAction() {
         }
 
         val selectedText = editor.selectionModel.selectedText // 에디터에서 현재 선택된 텍스트를 가져옵니다.
+        val virtualFile = e.getData(CommonDataKeys.VIRTUAL_FILE) // 현재 파일의 VirtualFile 인스턴스를 가져옵니다.
 
         if (selectedText.isNullOrEmpty()) { // 선택된 텍스트가 없는 경우, 액션을 수행하지 않고 종료합니다.
             return
         }
 
+        val fileName = virtualFile?.name // 파일 이름을 가져옵니다.
+        val lineNumber = editor.document.getLineNumber(editor.selectionModel.selectionStart) + 1 // 선택 시작 라인 번호를 가져옵니다 (0-based이므로 +1).
+        val fileInfo = if (fileName != null) "$fileName (라인: $lineNumber)" else null // 파일 정보 문자열을 생성합니다.
+
         val chatService = project.service<ChatService>() // ChatService 인스턴스를 가져옵니다.
 
         val toolWindowManager = ToolWindowManager.getInstance(project) // ToolWindowManager 인스턴스를 가져옵니다.
 
-        val toolWindow = toolWindowManager.getToolWindow("소진공챗봇(개발자전용)") // "소진공챗봇(개발자전용)" ID를 가진 툴 윈도우를 가져옵니다.
+        val toolWindow = toolWindowManager.getToolWindow("semasChatbot")
 
-        toolWindow?.activate(Runnable { // 툴 윈도우를 활성화하고, 활성화된 후 실행될 작업을 정의합니다.
-            chatService.sendCodeToLLM(selectedText) // 선택된 텍스트를 ChatService를 통해 LLM으로 전송합니다.
+        toolWindow?.activate(Runnable {
+            if (fileInfo != null) {
+                chatService.setSelectionContext(selectedText, fileInfo)
+            }
         })
     }
 

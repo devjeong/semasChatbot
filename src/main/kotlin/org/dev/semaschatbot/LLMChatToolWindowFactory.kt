@@ -10,6 +10,8 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.content.ContentFactory
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
 import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JPanel
@@ -52,25 +54,34 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val loadingLabel = JLabel("로딩 중...") // 로딩 인디케이터 레이블 생성
         loadingLabel.isVisible = false // 초기에는 보이지 않도록 설정
         inputPanel.add(loadingLabel, BorderLayout.WEST) // 입력 패널의 왼쪽에 로딩 인디케이터 추가
-        val inputField = JTextField() // 사용자 메시지를 입력할 텍스트 필드입니다.
+        val inputField = JBTextArea() // 사용자 메시지를 입력할 텍스트 필드입니다.
+        inputField.rows = 3
+        inputField.lineWrap = true
+        inputField.wrapStyleWord = true
+        val inputScrollPane = JBScrollPane(inputField)
         inputField.setBorder(BorderFactory.createCompoundBorder(
             inputField.border,
             EmptyBorder(5, 5, 5, 5) // 입력 필드에 내부 여백을 추가합니다.
         ))
-        val sendButton = JButton("Send") // 메시지 전송 버튼입니다.
+        val sendButton = JButton("Send(Ctrl+Enter)") // 메시지 전송 버튼입니다.
         val resetButton = JButton("Reset") // 대화 초기화 버튼입니다.
         val promptButton = JButton("Prompt") // 프롬프트 수정 버튼입니다.
 
         val topPanel = JPanel(BorderLayout())
         topPanel.add(promptButton, BorderLayout.WEST)
 
-        inputPanel.add(inputField, BorderLayout.CENTER) // 입력 패널의 중앙에 입력 필드를 추가합니다.
+        inputPanel.add(inputScrollPane, BorderLayout.CENTER) // 입력 패널의 중앙에 입력 필드를 추가합니다.
         val buttonPanel = JPanel(BorderLayout()) // 버튼들을 담을 패널을 생성합니다.
         buttonPanel.add(sendButton, BorderLayout.WEST) // 전송 버튼을 버튼 패널의 왼쪽에 추가합니다.
         buttonPanel.add(resetButton, BorderLayout.EAST) // 초기화 버튼을 버튼 패널의 오른쪽에 추가합니다.
         inputPanel.add(buttonPanel, BorderLayout.EAST) // 입력 패널의 오른쪽에 버튼 패널을 추가합니다.
 
+        val fileInfoLabel = JLabel("") // 파일 정보를 표시할 레이블
+        fileInfoLabel.border = EmptyBorder(0, 5, 5, 5) // 여백 추가
+        fileInfoLabel.isVisible = false // 초기에는 숨김
+
         val southPanel = JPanel(BorderLayout())
+        southPanel.add(fileInfoLabel, BorderLayout.NORTH) // 파일 정보 레이블을 입력 패널 위에 추가
         southPanel.add(inputPanel, BorderLayout.CENTER)
 
         panel.add(topPanel, BorderLayout.NORTH)
@@ -79,6 +90,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         chatService.chatLog = chatLogArea
         chatService.scrollPane = scrollPane
         chatService.loadingIndicator = loadingLabel
+        chatService.fileInfoLabel = fileInfoLabel
 
         // 'Send' 버튼 클릭 시 동작을 정의합니다.
         sendButton.addActionListener {
@@ -131,9 +143,13 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         }
 
         // 입력 필드에서 Enter 키를 눌렀을 때 'Send' 버튼 클릭과 동일하게 동작하도록 설정합니다.
-        inputField.addActionListener {
-            sendButton.doClick() // 'Send' 버튼의 클릭 이벤트를 발생시킵니다.
-        }
+        inputField.addKeyListener(object : KeyAdapter() {
+            override fun keyPressed(e: KeyEvent) {
+                if (e.isControlDown && e.keyCode == KeyEvent.VK_ENTER) {
+                    sendButton.doClick()
+                }
+            }
+        })
 
         // ContentFactory를 사용하여 툴 윈도우에 표시될 Content 객체를 생성합니다.
         val contentFactory = ContentFactory.getInstance()
