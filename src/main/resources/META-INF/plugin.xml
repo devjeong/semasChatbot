@@ -31,14 +31,14 @@
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
     <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.kotlin</depends>
 
     <!-- Extension points defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
-        <!--<projectService serviceImplementation="org.dev.semaschatbot.LmStudioClient" />-->
-        <!--<projectService serviceImplementation="org.dev.semaschatbot.ChatService" />-->
         <toolWindow id="semasChatbot" anchor="right" factoryClass="org.dev.semaschatbot.LLMChatToolWindowFactory"/>
-        <notificationGroup id="LLMNoti" displayType="BALLOON"></notificationGroup>
+        <notificationGroup id="LLMNoti" displayType="BALLOON"/>
+        <codeInsight.lineMarkerProvider language="" implementationClass="org.dev.semaschatbot.CodeActionLineMarkerProvider"/>
     </extensions>
 
     <resource-bundle>META-INF.MessagesBundle</resource-bundle>
@@ -49,7 +49,9 @@
                 text="Send Selection to Chat"
                 description="Sends the currently selected code to the Semas Chatbot.">
             <add-to-group group-id="EditorPopupMenu" anchor="first"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="control shift C"/>
         </action>
     </actions>
 </idea-plugin>
+
+
+

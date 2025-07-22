@@ -4,7 +4,7 @@ import org.jetbrains.intellij.platform.gradle.models.ProductRelease
 plugins {
     id("java")
     id("org.jetbrains.kotlin.jvm") version "2.1.0"
-    id("org.jetbrains.intellij.platform") version "2.5.0"
+    id("org.jetbrains.intellij.platform") version "2.4.0"
 }
 
 group = "org.dev"
@@ -23,6 +23,8 @@ repositories {
 dependencies {
     intellijPlatform {
         create("IC", "2024.1")
+        bundledPlugin("com.intellij.java") // Java PSI 지원
+        bundledPlugin("org.jetbrains.kotlin") // Kotlin PSI 지원
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
         // Add necessary plugin dependencies for compilation here, example:

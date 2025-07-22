@@ -1,5 +1,6 @@
 package org.dev.semaschatbot
 
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
@@ -55,9 +56,12 @@ class SendSelectionToChatAction : AnAction() {
      * 에디터가 활성화되어 있고 텍스트가 선택된 경우에만 액션을 활성화합니다.
      * @param e 액션 이벤트 객체
      */
-    override fun update(e: AnActionEvent) {
+    /*override fun update(e: AnActionEvent) {
         val editor = e.getData(CommonDataKeys.EDITOR) // 현재 에디터 인스턴스를 가져옵니다.
         // 에디터가 존재하고, 선택된 텍스트가 비어있지 않은 경우에만 액션을 활성화하고 표시합니다.
         e.presentation.isEnabledAndVisible = editor != null && !editor.selectionModel.selectedText.isNullOrEmpty()
+    }*/
+    override fun getActionUpdateThread(): ActionUpdateThread {
+        return ActionUpdateThread.EDT // UI 관련 작업이므로 EDT 사용
     }
 }

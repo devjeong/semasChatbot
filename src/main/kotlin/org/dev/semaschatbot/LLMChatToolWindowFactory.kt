@@ -87,16 +87,22 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         panel.add(topPanel, BorderLayout.NORTH)
         panel.add(southPanel, BorderLayout.SOUTH) // 메인 패널의 하단에 입력 패널을 추가합니다.
 
+        // 할당할 chatLogArea를 chatService의 chatLog 속성에 저장
         chatService.chatLog = chatLogArea
+
+        // 할당할 scrollPane을 chatService의 scrollPane 속성에 저장
         chatService.scrollPane = scrollPane
+
+        // 할당할 loadingLabel을 chatService의 loadingIndicator 속성에 저장
         chatService.loadingIndicator = loadingLabel
+
+        // 할당할 fileInfoLabel을 chatService의 fileInfoLabel 속성에 저장
         chatService.fileInfoLabel = fileInfoLabel
 
         // 'Send' 버튼 클릭 시 동작을 정의합니다.
         sendButton.addActionListener {
             val message = inputField.text // 입력 필드의 텍스트를 가져옵니다.
             if (message.isNotBlank()) { // 메시지가 비어있지 않은 경우에만 처리합니다.
-                chatService.sendMessage(message, isUser = true) // 사용자 메시지를 챗봇 로그에 추가합니다.
                 chatService.sendChatRequestToLLM(message) // LLM에 채팅 요청을 보냅니다.
                 inputField.text = "" // 입력 필드를 초기화합니다.
             }
@@ -129,10 +135,14 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                 val newSystemMessage = textArea.text
                 if (newSystemMessage.isNotBlank()) {
                     chatService.systemMessage = newSystemMessage
-                    chatService.sendMessage("시스템 프롬프트가 변경되었습니다.", isUser = false)
+                    chatService.sendMessage("Prompt가 변경되었습니다.", isUser = false)
                 }
             }
         }
+
+
+
+
 
         // 'Reset' 버튼 클릭 시 동작을 정의합니다.
         resetButton.addActionListener {
