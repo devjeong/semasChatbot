@@ -66,9 +66,13 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val sendButton = JButton("Send(Ctrl+Enter)") // 메시지 전송 버튼입니다.
         val resetButton = JButton("Reset") // 대화 초기화 버튼입니다.
         val promptButton = JButton("Prompt") // 프롬프트 수정 버튼입니다.
+        val analyzeFileButton = JButton("전체 파일 분석") // 전체 파일 분석 버튼입니다.
 
         val topPanel = JPanel(BorderLayout())
-        topPanel.add(promptButton, BorderLayout.WEST)
+        val leftButtonPanel = JPanel()
+        leftButtonPanel.add(promptButton)
+        leftButtonPanel.add(analyzeFileButton)
+        topPanel.add(leftButtonPanel, BorderLayout.WEST)
 
         inputPanel.add(inputScrollPane, BorderLayout.CENTER) // 입력 패널의 중앙에 입력 필드를 추가합니다.
         val buttonPanel = JPanel(BorderLayout()) // 버튼들을 담을 패널을 생성합니다.
@@ -143,6 +147,11 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
 
 
 
+
+        // '전체 파일 분석' 버튼 클릭 시 동작을 정의합니다.
+        analyzeFileButton.addActionListener {
+            chatService.setFullFileContext()
+        }
 
         // 'Reset' 버튼 클릭 시 동작을 정의합니다.
         resetButton.addActionListener {

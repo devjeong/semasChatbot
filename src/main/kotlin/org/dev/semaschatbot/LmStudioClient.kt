@@ -16,10 +16,10 @@ class LmStudioClient(
 ) {
 
     private val client = OkHttpClient.Builder() // HTTP 요청을 보내기 위한 OkHttpClient 인스턴스
-        .connectTimeout(30, TimeUnit.SECONDS) // 서버 연결 시도 시 최대 대기 시간 (30초)
-        .readTimeout(60, TimeUnit.SECONDS) // 서버로부터 응답 데이터를 읽을 때 최대 대기 시간 (60초)
-        .writeTimeout(30, TimeUnit.SECONDS) // 서버로 요청 데이터를 쓸 때 최대 대기 시간 (30초)
-        .callTimeout(120, TimeUnit.SECONDS) // 전체 요청-응답 주기에 대한 최대 대기 시간 (120초)
+        .connectTimeout(60, TimeUnit.SECONDS) // 서버 연결 시도 시 최대 대기 시간 (30초)
+        .readTimeout(120, TimeUnit.SECONDS) // 서버로부터 응답 데이터를 읽을 때 최대 대기 시간 (60초)
+        .writeTimeout(60, TimeUnit.SECONDS) // 서버로 요청 데이터를 쓸 때 최대 대기 시간 (30초)
+        .callTimeout(240, TimeUnit.SECONDS) // 전체 요청-응답 주기에 대한 최대 대기 시간 (120초)
         .build()
     private val gson = Gson() // JSON 직렬화 및 역직렬화를 위한 Gson 인스턴스
 
