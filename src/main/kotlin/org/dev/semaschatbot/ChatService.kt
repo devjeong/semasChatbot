@@ -1,13 +1,9 @@
 package org.dev.semaschatbot
 
-import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerEx
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
-import com.intellij.diff.tools.util.base.DiffViewerBase
-
-import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.Service
@@ -18,10 +14,8 @@ import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.ui.JBColor
-import com.intellij.icons.AllIcons
 import groovy.util.logging.Slf4j
 import java.awt.Color
 import java.util.regex.Pattern
@@ -29,7 +23,6 @@ import javax.swing.JLabel
 import javax.swing.JScrollPane
 import javax.swing.JTextArea
 import javax.swing.SwingWorker
-import javax.swing.SwingUtilities
 
 /**
  * 제안된 코드 변경 사항을 관리하는 데이터 클래스입니다.
