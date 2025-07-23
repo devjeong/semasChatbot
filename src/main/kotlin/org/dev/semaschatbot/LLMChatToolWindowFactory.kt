@@ -27,6 +27,19 @@ import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Paths
 import com.intellij.ide.BrowserUtil
+import java.awt.Font
+import java.awt.Dimension
+import java.awt.FlowLayout
+import java.awt.GridBagLayout
+import java.awt.GridBagConstraints
+import java.awt.Insets
+import javax.swing.BoxLayout
+import javax.swing.Box
+import javax.swing.border.LineBorder
+import javax.swing.border.CompoundBorder
+import java.awt.RenderingHints
+import java.awt.Graphics
+import java.awt.Graphics2D
 
 /**
  * LLMChatToolWindowFactory는 IntelliJ IDEA의 툴 윈도우를 생성하고 관리하는 팩토리 클래스입니다.
@@ -45,74 +58,105 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
 
         // 툴 윈도우의 메인 패널을 생성합니다. BorderLayout을 사용하여 컴포넌트들을 배치합니다.
         val panel = JPanel(BorderLayout())
-        panel.background = Color.WHITE // 패널의 배경색을 흰색으로 설정합니다.
+        panel.background = Color(245, 245, 245) // 패널의 배경색을 연한 회색으로 설정합니다.
 
-        // 챗봇의 대화 기록을 표시할 텍스트 영역을 생성합니다.
-        val chatLogArea = JBTextArea()
-        chatLogArea.isEditable = false // 사용자가 직접 편집할 수 없도록 설정합니다.
-        chatLogArea.lineWrap = true // 자동 줄바꿈을 활성화합니다.
-        chatLogArea.wrapStyleWord = true // 단어 단위로 줄바꿈되도록 설정합니다.
-        val scrollPane = JBScrollPane(chatLogArea) // 텍스트 영역에 스크롤 기능을 추가합니다.
-        panel.add(scrollPane, BorderLayout.CENTER) // 메인 패널의 중앙에 스크롤 가능한 텍스트 영역을 추가합니다.
+        // 메신저 스타일의 채팅 패널을 생성합니다.
+        val chatPanel = JPanel()
+        chatPanel.layout = BoxLayout(chatPanel, BoxLayout.Y_AXIS)
+        chatPanel.background = Color.WHITE
+        chatPanel.border = EmptyBorder(5, 8, 5, 8)
+        
+        val scrollPane = JBScrollPane(chatPanel)
+        scrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+        scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+        scrollPane.background = Color.WHITE
+        scrollPane.border = LineBorder(Color(220, 220, 220), 1)
+        panel.add(scrollPane, BorderLayout.CENTER)
 
         // 사용자 입력을 위한 패널과 컴포넌트들을 생성합니다.
         val inputPanel = JPanel(BorderLayout()) // 입력 필드와 버튼을 포함할 패널입니다.
-        val loadingLabel = JLabel("로딩 중...") // 로딩 인디케이터 레이블 생성
+        inputPanel.background = Color(245, 245, 245)
+        inputPanel.border = EmptyBorder(5, 10, 10, 10)
+        
+        val loadingLabel = JLabel("⏳ 로딩 중...") // 로딩 인디케이터 레이블 생성
         loadingLabel.isVisible = false // 초기에는 보이지 않도록 설정
+        loadingLabel.foreground = Color(52, 152, 219)
+        loadingLabel.font = Font("SansSerif", Font.PLAIN, 12)
         inputPanel.add(loadingLabel, BorderLayout.WEST) // 입력 패널의 왼쪽에 로딩 인디케이터 추가
+        
         val inputField = JBTextArea() // 사용자 메시지를 입력할 텍스트 필드입니다.
         inputField.rows = 3
         inputField.lineWrap = true
         inputField.wrapStyleWord = true
+        inputField.background = Color.WHITE
+        inputField.foreground = Color.BLACK
+        inputField.font = Font("SansSerif", Font.PLAIN, 14)
+        
         val inputScrollPane = JBScrollPane(inputField)
-        inputField.setBorder(BorderFactory.createCompoundBorder(
-            inputField.border,
-            EmptyBorder(5, 5, 5, 5) // 입력 필드에 내부 여백을 추가합니다.
-        ))
-        val sendButton = JButton("Send(Ctrl+Enter)") // 메시지 전송 버튼입니다.
-        val resetButton = JButton("Reset") // 대화 초기화 버튼입니다.
-        val promptButton = JButton("Prompt") // 프롬프트 수정 버튼입니다.
-        val analyzeFileButton = JButton("전체 파일 분석") // 전체 파일 분석 버튼입니다.
-
-        val guideButton = JButton("📖 가이드") // 가이드 문서 버튼입니다.
+        inputScrollPane.border = CompoundBorder(
+            LineBorder(Color(200, 200, 200), 1, true),
+            EmptyBorder(8, 12, 8, 12)
+        )
+        // 모던한 스타일의 버튼들을 생성합니다.
+        val sendButton = createStyledButton("📤 전송", Color(52, 152, 219), Color.WHITE)
+        val resetButton = createStyledButton("🔄 초기화", Color(231, 76, 60), Color.WHITE)
+        val promptButton = createStyledButton("⚙️ 프롬프트", Color(155, 89, 182), Color.WHITE)
+        val analyzeFileButton = createStyledButton("📄 전체 분석", Color(46, 204, 113), Color.WHITE)
+        val guideButton = createStyledButton("📖 가이드", Color(230, 126, 34), Color.WHITE)
+        
+        // 커스텀 헤더 패널 생성
+        val headerPanel = createHeaderPanel()
         
         val topPanel = JPanel(BorderLayout())
-        val leftButtonPanel = JPanel()
+        topPanel.background = Color(245, 245, 245)
+        topPanel.border = EmptyBorder(5, 10, 5, 10)
+        topPanel.add(headerPanel, BorderLayout.NORTH)
+        
+        val buttonContainerPanel = JPanel(BorderLayout())
+        buttonContainerPanel.background = Color(245, 245, 245)
+        
+        val leftButtonPanel = JPanel(FlowLayout(FlowLayout.LEFT, 5, 0))
+        leftButtonPanel.background = Color(245, 245, 245)
         leftButtonPanel.add(promptButton)
         leftButtonPanel.add(analyzeFileButton)
-        topPanel.add(leftButtonPanel, BorderLayout.WEST)
+        buttonContainerPanel.add(leftButtonPanel, BorderLayout.WEST)
         
-        val rightButtonPanel = JPanel()
+        val rightButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 0))
+        rightButtonPanel.background = Color(245, 245, 245)
         rightButtonPanel.add(guideButton)
-        topPanel.add(rightButtonPanel, BorderLayout.EAST)
+        buttonContainerPanel.add(rightButtonPanel, BorderLayout.EAST)
+        
+        topPanel.add(buttonContainerPanel, BorderLayout.CENTER)
 
         inputPanel.add(inputScrollPane, BorderLayout.CENTER) // 입력 패널의 중앙에 입력 필드를 추가합니다.
-        val buttonPanel = JPanel(BorderLayout()) // 버튼들을 담을 패널을 생성합니다.
-        buttonPanel.add(sendButton, BorderLayout.WEST) // 전송 버튼을 버튼 패널의 왼쪽에 추가합니다.
-        buttonPanel.add(resetButton, BorderLayout.EAST) // 초기화 버튼을 버튼 패널의 오른쪽에 추가합니다.
-        inputPanel.add(buttonPanel, BorderLayout.EAST) // 입력 패널의 오른쪽에 버튼 패널을 추가합니다.
+        
+        // 버튼들을 입력창 아래쪽에 배치하는 패널
+        val bottomButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 5))
+        bottomButtonPanel.background = Color(245, 245, 245)
+        bottomButtonPanel.add(resetButton) // 초기화 버튼을 먼저 추가
+        bottomButtonPanel.add(sendButton) // 전송 버튼을 나중에 추가 (오른쪽에 위치)
+        inputPanel.add(bottomButtonPanel, BorderLayout.SOUTH) // 입력 패널의 아래쪽에 버튼 패널을 추가합니다.
 
         val fileInfoLabel = JLabel("") // 파일 정보를 표시할 레이블
-        fileInfoLabel.border = EmptyBorder(0, 5, 5, 5) // 여백 추가
+        fileInfoLabel.border = EmptyBorder(5, 15, 5, 15) // 여백 추가
         fileInfoLabel.isVisible = false // 초기에는 숨김
+        fileInfoLabel.foreground = Color(100, 100, 100)
+        fileInfoLabel.font = Font("SansSerif", Font.ITALIC, 12)
+        fileInfoLabel.background = Color(248, 248, 248)
+        fileInfoLabel.isOpaque = true
 
         val southPanel = JPanel(BorderLayout())
+        southPanel.background = Color(245, 245, 245)
         southPanel.add(fileInfoLabel, BorderLayout.NORTH) // 파일 정보 레이블을 입력 패널 위에 추가
         southPanel.add(inputPanel, BorderLayout.CENTER)
 
         panel.add(topPanel, BorderLayout.NORTH)
         panel.add(southPanel, BorderLayout.SOUTH) // 메인 패널의 하단에 입력 패널을 추가합니다.
 
-        // 할당할 chatLogArea를 chatService의 chatLog 속성에 저장
-        chatService.chatLog = chatLogArea
-
-        // 할당할 scrollPane을 chatService의 scrollPane 속성에 저장
+        // ChatService에 새로운 메신저 스타일 컴포넌트들을 설정
+        chatService.chatPanel = chatPanel
         chatService.scrollPane = scrollPane
-
-        // 할당할 loadingLabel을 chatService의 loadingIndicator 속성에 저장
         chatService.loadingIndicator = loadingLabel
-
-        // 할당할 fileInfoLabel을 chatService의 fileInfoLabel 속성에 저장
         chatService.fileInfoLabel = fileInfoLabel
 
         // 'Send' 버튼 클릭 시 동작을 정의합니다.
@@ -192,7 +236,9 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
 
         // 'Reset' 버튼 클릭 시 동작을 정의합니다.
         resetButton.addActionListener {
-            chatLogArea.text = "" // 챗봇 대화 기록을 지웁니다.
+            chatPanel.removeAll() // 모든 메시지 패널을 제거합니다.
+            chatPanel.revalidate()
+            chatPanel.repaint()
             ApplicationManager.getApplication().invokeLater {
                 chatService.sendMessage("대화가 초기화되었습니다.", isUser = false) // 챗봇에 초기화 메시지를 표시합니다.
             }
@@ -216,6 +262,104 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         ApplicationManager.getApplication().invokeLater {
             chatService.sendMessage("안녕하세요! 소진공 AI 챗봇입니다. 무엇을 도와드릴까요?", isUser = false) // 챗봇의 초기 메시지를 전송합니다.
         }
+    }
+
+    /**
+     * 모던한 스타일의 버튼을 생성하는 함수입니다.
+     * @param text 버튼에 표시될 텍스트
+     * @param bgColor 버튼의 배경색
+     * @param fgColor 버튼의 글자색
+     * @return 스타일이 적용된 JButton
+     */
+    private fun createStyledButton(text: String, bgColor: Color, fgColor: Color): JButton {
+        val button = object : JButton(text) {
+            override fun paintComponent(g: Graphics) {
+                val g2d = g as Graphics2D
+                g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                
+                if (model.isPressed) {
+                    g2d.color = bgColor.darker()
+                } else if (model.isRollover) {
+                    g2d.color = bgColor.brighter()
+                } else {
+                    g2d.color = bgColor
+                }
+                
+                g2d.fillRoundRect(0, 0, width, height, 8, 8)
+                
+                // 텍스트 그리기
+                g2d.color = fgColor
+                val fm = g2d.fontMetrics
+                val textWidth = fm.stringWidth(text)
+                val textHeight = fm.ascent
+                val x = (width - textWidth) / 2
+                val y = (height + textHeight) / 2 - 2
+                g2d.drawString(text, x, y)
+            }
+        }
+        
+        button.foreground = fgColor
+        button.background = bgColor
+        button.font = Font("SansSerif", Font.BOLD, 11)
+        button.preferredSize = Dimension(80, 30)
+        button.isFocusPainted = false
+        button.isBorderPainted = false
+        button.isContentAreaFilled = false
+        button.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        
+        return button
+    }
+
+    /**
+     * 모던한 스타일의 헤더 패널을 생성하는 함수입니다.
+     * @return 스타일이 적용된 헤더 JPanel
+     */
+    private fun createHeaderPanel(): JPanel {
+        val headerPanel = JPanel(BorderLayout())
+        headerPanel.background = Color(173, 216, 230)
+        headerPanel.border = EmptyBorder(12, 15, 12, 15)
+        
+        // 아이콘과 제목을 포함하는 왼쪽 패널
+        val titlePanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
+        titlePanel.background = Color(173, 216, 230)
+        
+        // 아이콘 레이블
+        val iconLabel = JLabel("🤖")
+        iconLabel.font = Font("SansSerif", Font.PLAIN, 20)
+        titlePanel.add(iconLabel)
+        
+        // 제목 레이블
+        val titleLabel = JLabel("소진공 AI 챗봇")
+        titleLabel.foreground = Color.WHITE
+        titleLabel.font = Font("SansSerif", Font.BOLD, 16)
+        titlePanel.add(titleLabel)
+        
+        // 베타 배지
+        val betaBadge = JLabel("Beta")
+        betaBadge.foreground = Color(52, 152, 219)
+        betaBadge.background = Color.WHITE
+        betaBadge.font = Font("SansSerif", Font.BOLD, 10)
+        betaBadge.border = CompoundBorder(
+            LineBorder(Color.WHITE, 1, true),
+            EmptyBorder(2, 6, 2, 6)
+        )
+        betaBadge.isOpaque = true
+        titlePanel.add(betaBadge)
+        
+        headerPanel.add(titlePanel, BorderLayout.WEST)
+        
+        // 상태 표시 (우측)
+        val statusPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
+        statusPanel.background = Color(173, 216, 230)
+        
+        val statusLabel = JLabel("● 온라인")
+        statusLabel.foreground = Color(46, 204, 113)
+        statusLabel.font = Font("SansSerif", Font.PLAIN, 12)
+        statusPanel.add(statusLabel)
+        
+        headerPanel.add(statusPanel, BorderLayout.EAST)
+        
+        return headerPanel
     }
 
     /**

@@ -42,7 +42,7 @@ class SendSelectionToChatAction : AnAction() {
 
         val toolWindowManager = ToolWindowManager.getInstance(project) // ToolWindowManager 인스턴스를 가져옵니다.
 
-        val toolWindow = toolWindowManager.getToolWindow("semasChatbot")
+        val toolWindow = toolWindowManager.getToolWindow("소진공개발AI(Beta)")
 
         toolWindow?.activate(Runnable {
             if (fileInfo != null) {

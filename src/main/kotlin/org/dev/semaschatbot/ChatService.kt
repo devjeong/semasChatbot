@@ -23,6 +23,16 @@ import javax.swing.JLabel
 import javax.swing.JScrollPane
 import javax.swing.JTextArea
 import javax.swing.SwingWorker
+import javax.swing.JPanel
+import javax.swing.BoxLayout
+import javax.swing.Box
+import javax.swing.border.EmptyBorder
+import javax.swing.border.CompoundBorder
+import javax.swing.border.LineBorder
+import java.awt.BorderLayout
+import java.awt.FlowLayout
+import java.awt.Font
+import java.awt.Dimension
 
 /**
  * 제안된 코드 변경 사항을 관리하는 데이터 클래스입니다.
@@ -86,7 +96,7 @@ class ChatService(private val project: Project) {
     private val apiClient = LmStudioClient()
     var systemMessage: String = "You are a helpful assistant. Please respond in Korean."
 
-    var chatLog: JTextArea? = null
+    var chatPanel: JPanel? = null
     var scrollPane: JScrollPane? = null
     var loadingIndicator: JLabel? = null
     var fileInfoLabel: JLabel? = null
@@ -153,15 +163,137 @@ class ChatService(private val project: Project) {
     }
 
     /**
-     * 챗봇 UI에 메시지를 추가합니다.
+     * 메신저 스타일의 채팅 UI에 메시지를 추가합니다.
      * @param message 표시할 메시지
-     * @param isUser 사용자가 보낸 메시지인지 여부
+     * @param isUser 사용자가 보낸 메시지인지 여부 (true: 우측, false: 좌측)
      */
     fun sendMessage(message: String, isUser: Boolean = true) {
         ApplicationManager.getApplication().invokeLater {
-            chatLog?.append(if (isUser) "나: $message\n\n" else "소진공: $message\n\n")
-            scrollPane?.verticalScrollBar?.value = scrollPane?.verticalScrollBar?.maximum ?: 0
+            chatPanel?.let { panel ->
+                val messagePanel = createMessagePanel(message, isUser)
+                // messagePanel 간 간격 완전 제거
+                panel.add(messagePanel)
+                panel.revalidate()
+                panel.repaint()
+                
+                // 스크롤을 맨 아래로 이동
+                scrollPane?.let { scroll ->
+                    scroll.verticalScrollBar.value = scroll.verticalScrollBar.maximum
+                }
+            }
         }
+    }
+
+    /**
+     * 메신저 스타일의 메시지 패널을 생성합니다.
+     * @param message 메시지 텍스트
+     * @param isUser 사용자 메시지 여부 (true: 우측, false: 좌측)
+     * @return 스타일이 적용된 메시지 패널
+     */
+    private fun createMessagePanel(message: String, isUser: Boolean): JPanel {
+        val containerPanel = JPanel(BorderLayout())
+        containerPanel.background = Color.WHITE
+        containerPanel.border = EmptyBorder(0, 0, 0, 0)
+        
+        val messageWrapper = JPanel(FlowLayout(if (isUser) FlowLayout.RIGHT else FlowLayout.LEFT, 7, 0))
+        messageWrapper.background = Color.WHITE
+        messageWrapper.border = EmptyBorder(0, 0, 0, 0)
+        
+        val messagePanel = JPanel(BorderLayout())
+        val messageText = JTextArea(message)
+        
+        if (isUser) {
+            // 사용자 메시지 (우측, 파란색)
+            messagePanel.background = Color(52, 152, 219)
+            messageText.background = Color(52, 152, 219)
+            messageText.foreground = Color.WHITE
+            messagePanel.border = CompoundBorder(
+                LineBorder(Color(41, 128, 185), 1, true),
+                EmptyBorder(6, 10, 6, 10)
+            )
+        } else {
+            // AI 메시지 (좌측, 회색)
+            messagePanel.background = Color(236, 240, 241)
+            messageText.background = Color(236, 240, 241)
+            messageText.foreground = Color(44, 62, 80)
+            messagePanel.border = CompoundBorder(
+                LineBorder(Color(189, 195, 199), 1, true),
+                EmptyBorder(6, 10, 6, 10)
+            )
+        }
+        
+        messageText.font = Font("SansSerif", Font.PLAIN, 13)
+        messageText.lineWrap = true
+        messageText.wrapStyleWord = true
+        messageText.isEditable = false
+        messageText.isOpaque = true
+        
+        // 메시지 텍스트 크기 계산을 위한 임시 설정
+        messageText.columns = 0
+        messageText.rows = 0
+        
+        messagePanel.add(messageText, BorderLayout.CENTER)
+        
+        // 텍스트 내용에 따른 동적 크기 계산
+        val textMetrics = messageText.getFontMetrics(messageText.font)
+        val maxWidth = 350
+        val minWidth = 80
+        
+        // 실제 JTextArea의 래핑을 시뮬레이션하여 정확한 줄 수 계산
+        val explicitLines = message.split('\n')
+        var totalLines = 0
+        var maxLineWidth = 0
+        
+        for (line in explicitLines) {
+            if (line.isEmpty()) {
+                totalLines += 1
+                continue
+            }
+            
+            val lineWidth = textMetrics.stringWidth(line)
+            maxLineWidth = maxOf(maxLineWidth, lineWidth)
+            
+            val availableWidth = maxWidth - 30 // 패딩 제외
+            
+            if (lineWidth <= availableWidth) {
+                totalLines += 1
+            } else {
+                // 단어 단위 래핑 시뮬레이션
+                val words = line.split(' ')
+                var currentLineWidth = 0
+                var currentLines = 1
+                
+                for (word in words) {
+                    val wordWidth = textMetrics.stringWidth("$word ")
+                    if (currentLineWidth + wordWidth > availableWidth) {
+                        currentLines++
+                        currentLineWidth = wordWidth
+                    } else {
+                        currentLineWidth += wordWidth
+                    }
+                }
+                totalLines += currentLines
+            }
+        }
+        
+        val lineHeight = textMetrics.height
+        val totalHeight = totalLines * lineHeight
+        val actualWidth = (maxLineWidth + 30).coerceIn(minWidth, maxWidth)
+        val actualHeight = totalHeight + 20
+        
+        // 패널 크기 조정 - 내용에 맞게 동적으로 설정
+        messagePanel.preferredSize = Dimension(actualWidth, actualHeight)
+        messagePanel.maximumSize = Dimension(maxWidth, actualHeight)
+        messagePanel.minimumSize = Dimension(minWidth, actualHeight)
+        
+        // 컨테이너 패널도 동일한 높이로 설정
+        containerPanel.preferredSize = Dimension(Int.MAX_VALUE, actualHeight)
+        containerPanel.maximumSize = Dimension(Int.MAX_VALUE, actualHeight)
+        
+        messageWrapper.add(messagePanel)
+        containerPanel.add(messageWrapper, BorderLayout.CENTER)
+        
+        return containerPanel
     }
 
     /**
