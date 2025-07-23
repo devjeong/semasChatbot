@@ -20,10 +20,12 @@ import javax.swing.JLabel
 import javax.swing.JTextArea
 import javax.swing.JScrollPane
 import javax.swing.JOptionPane
+import javax.swing.JPasswordField
 import javax.swing.border.EmptyBorder
 import java.awt.Desktop
 import java.io.File
 import java.net.URI
+import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Paths
 import com.intellij.ide.BrowserUtil
@@ -101,6 +103,8 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val sendButton = createStyledButton("📤 전송", Color(52, 152, 219), Color.WHITE)
         val resetButton = createStyledButton("🔄 초기화", Color(231, 76, 60), Color.WHITE)
         val promptButton = createStyledButton("⚙️ 프롬프트", Color(155, 89, 182), Color.WHITE)
+        val urlButton = createStyledButton("🌐 URL", Color(241, 196, 15), Color.WHITE)
+        val authButton = createStyledButton("🔐 인증", Color(52, 73, 94), Color.WHITE)
         val analyzeFileButton = createStyledButton("📄 전체 분석", Color(46, 204, 113), Color.WHITE)
         val guideButton = createStyledButton("📖 가이드", Color(230, 126, 34), Color.WHITE)
         
@@ -118,6 +122,8 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val leftButtonPanel = JPanel(FlowLayout(FlowLayout.LEFT, 5, 0))
         leftButtonPanel.background = Color(245, 245, 245)
         leftButtonPanel.add(promptButton)
+        leftButtonPanel.add(urlButton)
+        leftButtonPanel.add(authButton)
         leftButtonPanel.add(analyzeFileButton)
         buttonContainerPanel.add(leftButtonPanel, BorderLayout.WEST)
         
@@ -200,6 +206,86 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             }
         }
 
+        // 'URL' 버튼 클릭 시 동작을 정의합니다.
+        urlButton.addActionListener {
+            val currentUrl = chatService.getLmStudioUrl()
+
+            // URL 입력을 위한 JTextField 생성
+            val urlField = JTextField(50) // 50자 크기의 JTextField
+            urlField.text = currentUrl
+            urlField.font = Font("Monospaced", Font.PLAIN, 12)
+
+            // 설명 레이블 생성
+            val descriptionLabel = JLabel("LmStudio 서버 URL을 설정하세요:")
+            descriptionLabel.font = Font("SansSerif", Font.PLAIN, 12)
+
+            // 예시 레이블 생성
+            val exampleLabel = JLabel("예시: http://192.168.18.52:1234/v1")
+            exampleLabel.font = Font("SansSerif", Font.ITALIC, 11)
+            exampleLabel.foreground = Color.GRAY
+
+            // 패널 구성
+            val urlPanel = JPanel()
+            urlPanel.layout = BoxLayout(urlPanel, BoxLayout.Y_AXIS)
+            urlPanel.add(descriptionLabel)
+            urlPanel.add(Box.createVerticalStrut(5))
+            urlPanel.add(urlField)
+            urlPanel.add(Box.createVerticalStrut(5))
+            urlPanel.add(exampleLabel)
+
+            // JOptionPane을 사용하여 다이얼로그 표시
+            val result = JOptionPane.showConfirmDialog(
+                panel,
+                urlPanel,
+                "LmStudio URL 설정",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+            )
+
+            // 사용자가 OK를 눌렀을 경우
+            if (result == JOptionPane.OK_OPTION) {
+                val newUrl = urlField.text.trim()
+                if (newUrl.isNotBlank()) {
+                    // URL 유효성 검증
+                    try {
+                        val url = URI(newUrl).toURL()
+                        chatService.setLmStudioUrl(newUrl)
+                        chatService.sendMessage("LmStudio URL이 변경되었습니다: $newUrl", isUser = false)
+                    } catch (e: Exception) {
+                        chatService.sendMessage("유효하지 않은 URL입니다: ${e.message}", isUser = false)
+                        JOptionPane.showMessageDialog(
+                            panel,
+                            "유효하지 않은 URL입니다. 다시 확인해주세요.",
+                            "오류",
+                            JOptionPane.ERROR_MESSAGE
+                        )
+                    }
+                }
+                         }
+         }
+
+        // 'Auth' 버튼 클릭 시 동작을 정의합니다.
+        authButton.addActionListener {
+            if (chatService.isUserAuthenticated()) {
+                // 이미 인증된 경우, 재인증 여부 확인
+                val result = JOptionPane.showConfirmDialog(
+                    panel,
+                    "이미 인증되어 있습니다.\n다시 인증하시겠습니까?",
+                    "인증 상태",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.QUESTION_MESSAGE
+                )
+                
+                if (result == JOptionPane.YES_OPTION) {
+                    chatService.resetAuthentication()
+                    showAuthenticationDialog(chatService, panel)
+                }
+            } else {
+                // 인증되지 않은 경우, 인증 다이얼로그 표시
+                showAuthenticationDialog(chatService, panel)
+            }
+        }
+
         // '전체 파일 분석' 버튼 클릭 시 동작을 정의합니다.
         analyzeFileButton.addActionListener {
             chatService.setFullFileContext()
@@ -239,8 +325,16 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             chatPanel.removeAll() // 모든 메시지 패널을 제거합니다.
             chatPanel.revalidate()
             chatPanel.repaint()
+            
+            // 인증 상태도 초기화
+            chatService.resetAuthentication()
+            
             ApplicationManager.getApplication().invokeLater {
                 chatService.sendMessage("대화가 초기화되었습니다.", isUser = false) // 챗봇에 초기화 메시지를 표시합니다.
+                // 다시 인증 요구
+                if (chatService.requiresAuthentication()) {
+                    showAuthenticationDialog(chatService, panel)
+                }
             }
         }
 
@@ -258,9 +352,14 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val content = contentFactory.createContent(panel, "", false) // 생성된 패널을 Content로 래핑합니다.
         toolWindow.contentManager.addContent(content) // 툴 윈도우의 ContentManager에 Content를 추가하여 UI를 표시합니다.
 
-        // 툴 윈도우가 로드된 후 초기 환영 메시지를 비동기적으로 표시합니다.
+        // 툴 윈도우가 로드된 후 초기 인증 및 환영 메시지를 비동기적으로 표시합니다.
         ApplicationManager.getApplication().invokeLater {
-            chatService.sendMessage("안녕하세요! 소진공 AI 챗봇입니다. 무엇을 도와드릴까요?", isUser = false) // 챗봇의 초기 메시지를 전송합니다.
+            // 초기 인증 체크
+            if (chatService.requiresAuthentication()) {
+                showAuthenticationDialog(chatService, panel)
+            } else {
+                chatService.sendMessage("안녕하세요! 소진공 AI 챗봇입니다. 무엇을 도와드릴까요?", isUser = false)
+            }
         }
     }
 
@@ -590,5 +689,110 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         </body>
         </html>
         """.trimIndent()
+    }
+
+    /**
+     * 인증 다이얼로그를 표시하고 사용자 인증을 처리합니다.
+     * @param chatService 챗 서비스 인스턴스
+     * @param parentComponent 부모 컴포넌트 (다이얼로그의 위치 기준)
+     */
+    private fun showAuthenticationDialog(chatService: ChatService, parentComponent: JPanel) {
+        var authAttempts = 0
+        val maxAttempts = 3
+
+        fun attemptAuthentication() {
+            authAttempts++
+            
+            // 인증키 입력을 위한 JPasswordField 생성
+            val passwordField = JPasswordField(20)
+            passwordField.font = Font("Monospaced", Font.PLAIN, 12)
+
+            // 설명 레이블 생성
+            val descriptionLabel = JLabel("소진공 AI 챗봇을 사용하려면 인증키를 입력하세요:")
+            descriptionLabel.font = Font("SansSerif", Font.PLAIN, 12)
+
+            // 시도 횟수 표시 레이블
+            val attemptsLabel = JLabel("시도 횟수: $authAttempts / $maxAttempts")
+            attemptsLabel.font = Font("SansSerif", Font.ITALIC, 11)
+            attemptsLabel.foreground = if (authAttempts >= 2) Color.RED else Color.GRAY
+
+            // 보안 아이콘 레이블
+            val securityLabel = JLabel("🔐")
+            securityLabel.font = Font("SansSerif", Font.PLAIN, 20)
+
+            // 패널 구성
+            val authPanel = JPanel()
+            authPanel.layout = BoxLayout(authPanel, BoxLayout.Y_AXIS)
+            authPanel.add(Box.createVerticalStrut(5))
+            
+            val iconPanel = JPanel(FlowLayout(FlowLayout.CENTER))
+            iconPanel.add(securityLabel)
+            authPanel.add(iconPanel)
+            
+            authPanel.add(Box.createVerticalStrut(10))
+            authPanel.add(descriptionLabel)
+            authPanel.add(Box.createVerticalStrut(10))
+            authPanel.add(passwordField)
+            authPanel.add(Box.createVerticalStrut(5))
+            authPanel.add(attemptsLabel)
+
+            // 포커스를 패스워드 필드로 설정
+            passwordField.requestFocusInWindow()
+
+            // JOptionPane을 사용하여 다이얼로그 표시
+            val result = JOptionPane.showConfirmDialog(
+                parentComponent,
+                authPanel,
+                "SEMAS 챗봇 인증",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+            )
+
+            // 사용자가 OK를 눌렀을 경우
+            if (result == JOptionPane.OK_OPTION) {
+                val inputKey = String(passwordField.password)
+                
+                if (chatService.authenticateUser(inputKey)) {
+                    // 인증 성공
+                    chatService.sendMessage("✅ 인증이 완료되었습니다. 환영합니다!", isUser = false)
+                    chatService.sendMessage("안녕하세요! 소진공 AI 챗봇입니다. 무엇을 도와드릴까요?", isUser = false)
+                } else {
+                    // 인증 실패
+                    if (authAttempts >= maxAttempts) {
+                        // 최대 시도 횟수 초과
+                        chatService.sendMessage("❌ 인증에 실패했습니다. 최대 시도 횟수를 초과했습니다.", isUser = false)
+                        chatService.sendMessage("관리자에게 문의하시거나 나중에 다시 시도해주세요.", isUser = false)
+                        JOptionPane.showMessageDialog(
+                            parentComponent,
+                            "인증에 실패했습니다.\n최대 시도 횟수($maxAttempts)를 초과했습니다.\n챗봇을 초기화하거나 다시 시작해주세요.",
+                            "인증 실패",
+                            JOptionPane.ERROR_MESSAGE
+                        )
+                    } else {
+                        // 재시도 가능
+                        chatService.sendMessage("❌ 잘못된 인증키입니다. 다시 시도해주세요. (${maxAttempts - authAttempts}회 남음)", isUser = false)
+                        JOptionPane.showMessageDialog(
+                            parentComponent,
+                            "잘못된 인증키입니다.\n다시 시도해주세요. (${maxAttempts - authAttempts}회 남음)",
+                            "인증 실패",
+                            JOptionPane.WARNING_MESSAGE
+                        )
+                        // 재귀적으로 다시 인증 다이얼로그 표시
+                        ApplicationManager.getApplication().invokeLater {
+                            attemptAuthentication()
+                        }
+                    }
+                }
+                
+                // 입력된 패스워드 클리어 (보안)
+                passwordField.text = ""
+            } else {
+                // 사용자가 취소를 누른 경우
+                chatService.sendMessage("❌ 인증이 취소되었습니다. 챗봇을 사용하려면 인증이 필요합니다.", isUser = false)
+            }
+        }
+
+        // 인증 시도 시작
+        attemptAuthentication()
     }
 }

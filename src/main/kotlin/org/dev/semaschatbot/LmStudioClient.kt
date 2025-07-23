@@ -11,8 +11,7 @@ import java.util.concurrent.TimeUnit
  * LM Studio의 Chat Completions API를 사용하여 챗봇 요청을 보내고 응답을 처리합니다.
  */
 class LmStudioClient(
-    private val baseUrl: String = "http://192.168.18.52:1234/v1" // LM Studio 서버의 기본 URL. 필요에 따라 변경 가능합니다.
-    
+    private var baseUrl: String = "http://192.168.18.52:1234/v1" // LM Studio 서버의 기본 URL. 필요에 따라 변경 가능합니다.
 ) {
 
     private val client = OkHttpClient.Builder() // HTTP 요청을 보내기 위한 OkHttpClient 인스턴스
@@ -23,6 +22,21 @@ class LmStudioClient(
         .build()
     private val gson = Gson() // JSON 직렬화 및 역직렬화를 위한 Gson 인스턴스
 
+    /**
+     * LM Studio 서버의 기본 URL을 설정합니다.
+     * @param url 새로운 기본 URL
+     */
+    fun setBaseUrl(url: String) {
+        baseUrl = url.removeSuffix("/") // 끝의 슬래시 제거
+    }
+
+    /**
+     * 현재 설정된 기본 URL을 반환합니다.
+     * @return 현재 기본 URL
+     */
+    fun getBaseUrl(): String {
+        return baseUrl
+    }
     
     /**
      * LM Studio API에 채팅 요청을 보내고 응답을 반환합니다.

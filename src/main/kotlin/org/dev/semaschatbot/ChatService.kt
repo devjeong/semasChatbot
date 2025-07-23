@@ -33,6 +33,8 @@ import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Dimension
+import java.util.Properties
+import java.io.InputStream
 
 /**
  * 제안된 코드 변경 사항을 관리하는 데이터 클래스입니다.
@@ -109,6 +111,87 @@ class ChatService(private val project: Project) {
     
     // 전체 파일 변경 제안을 관리하기 위한 변수
     private var pendingFileChange: PendingFileChange? = null
+
+    // 인증 관련 변수들
+    private var isAuthenticated: Boolean = false
+    private var configProperties: Properties? = null
+
+    /**
+     * LmStudio 서버의 URL을 설정합니다.
+     * @param url 새로운 서버 URL
+     */
+    fun setLmStudioUrl(url: String) {
+        apiClient.setBaseUrl(url)
+    }
+
+    /**
+     * 현재 설정된 LmStudio 서버 URL을 반환합니다.
+     * @return 현재 서버 URL
+     */
+    fun getLmStudioUrl(): String {
+        return apiClient.getBaseUrl()
+    }
+
+    /**
+     * 설정 파일을 로드합니다.
+     */
+    private fun loadConfigProperties(): Properties? {
+        return try {
+            val properties = Properties()
+            val inputStream: InputStream? = this::class.java.classLoader.getResourceAsStream("config.properties")
+            inputStream?.use {
+                properties.load(it)
+            }
+            properties
+        } catch (e: Exception) {
+            println("설정 파일을 로드하는 중 오류 발생: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * 인증키를 검증합니다.
+     * @param inputKey 사용자가 입력한 인증키
+     * @return 인증 성공 여부
+     */
+    fun authenticateUser(inputKey: String): Boolean {
+        if (configProperties == null) {
+            configProperties = loadConfigProperties()
+        }
+        
+        val correctKey = configProperties?.getProperty("auth.key")
+        val isValid = correctKey != null && inputKey.trim() == correctKey
+        
+        if (isValid) {
+            isAuthenticated = true
+        }
+        
+        return isValid
+    }
+
+    /**
+     * 현재 인증 상태를 반환합니다.
+     * @return 인증 여부
+     */
+    fun isUserAuthenticated(): Boolean {
+        return isAuthenticated
+    }
+
+    /**
+     * 인증 상태를 초기화합니다.
+     */
+    fun resetAuthentication() {
+        isAuthenticated = false
+        sendMessage("인증이 초기화되었습니다. 다시 인증해주세요.", isUser = false)
+    }
+
+    /**
+     * 인증이 필요한지 확인합니다.
+     * @return 인증이 필요한 경우 true
+     */
+    fun requiresAuthentication(): Boolean {
+        return !isAuthenticated
+    }
 
     /**
      * 사용자가 에디터에서 선택한 코드와 파일 정보를 컨텍스트로 설정합니다.
@@ -331,6 +414,11 @@ class ChatService(private val project: Project) {
      * @param userInput 사용자의 입력 메시지
      */
     fun sendChatRequestToLLM(userInput: String) {
+        // 인증 체크
+        if (!isUserAuthenticated()) {
+            sendMessage("❌ 인증이 필요합니다. 인증키를 입력해주세요.", isUser = false)
+            return
+        }
         val codeContext = selectedCode  // 선택된 영역만 사용
         val fileContext = selectedFileInfo
         val editor = FileEditorManager.getInstance(project).selectedTextEditor

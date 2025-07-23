@@ -41,6 +41,8 @@
 - ⚡ **토큰 효율성**: 혁신적인 차분 알고리즘으로 토큰 사용량 80-90% 절약
 - 🔄 **실시간 미리보기**: Diff 창을 통한 변경사항 실시간 확인
 - 🎨 **직관적 UI**: IntelliJ IDEA의 네이티브 UI와 완벽 통합
+- 🌐 **유연한 서버 설정**: UI를 통한 LM Studio 서버 URL 동적 변경
+- 🛡️ **보안 인증 시스템**: 인증키 기반 접근 제어로 안전한 사용 환경
 
 ---
 
@@ -107,6 +109,41 @@ enum class UserInputType {
 }
 ```
 
+### 5. 🛡️ 보안 인증 시스템
+
+#### **인증키 기반 접근 제어**
+- **설정 파일 관리**: `config.properties`에 인증키 저장
+- **3회 시도 제한**: 잘못된 인증 시도 방지
+- **자동 세션 관리**: 초기화/종료 시 인증 상태 리셋
+
+#### **보안 기능**
+```kotlin
+// 인증 상태 관리
+fun authenticateUser(inputKey: String): Boolean
+fun resetAuthentication()
+fun requiresAuthentication(): Boolean
+
+// 설정 파일에서 인증키 로드
+auth.key=semas1@3
+```
+
+### 6. 🌐 동적 서버 설정
+
+#### **실시간 URL 변경**
+- **UI 기반 설정**: 🌐 URL 버튼을 통한 직관적 설정
+- **유효성 검증**: 잘못된 URL 형식 자동 감지
+- **즉시 적용**: 설정 변경 후 바로 다음 요청부터 적용
+
+#### **서버 설정 관리**
+```kotlin
+// 동적 URL 변경
+fun setBaseUrl(url: String)
+fun getBaseUrl(): String
+
+// 기본 설정
+private var baseUrl: String = "http://192.168.18.52:1234/v1"
+```
+
 ---
 
 ## 🔧 설치 및 설정
@@ -151,8 +188,40 @@ cd semasChatbot
 
 4. **플러그인 연결 설정**
    ```kotlin
-   // LmStudioClient.kt에서 baseUrl 수정
-   private val baseUrl: String = "http://YOUR_IP:1234/v1"
+   // 기본 URL (변경 가능)
+   private var baseUrl: String = "http://192.168.18.52:1234/v1"
+   ```
+
+### 인증 시스템 설정
+
+1. **인증키 설정**
+   ```properties
+   # src/main/resources/config.properties
+   auth.key=semas1@3
+   ```
+
+2. **초기 인증 과정**
+   - 챗봇 첫 실행 시 자동으로 인증 팝업 표시
+   - 인증키 입력 (최대 3회 시도)
+   - 인증 성공 시 챗봇 사용 가능
+
+3. **인증 관리**
+   - 🔐 인증 버튼: 수동 재인증
+   - 🔄 초기화 버튼: 인증 상태 리셋
+   - 챗봇 종료 시: 자동 인증 해제
+
+### 서버 URL 동적 설정
+
+1. **UI를 통한 설정**
+   - 🌐 URL 버튼 클릭
+   - 새로운 서버 URL 입력
+   - 유효성 검증 후 즉시 적용
+
+2. **지원되는 URL 형식**
+   ```
+   http://localhost:1234/v1
+   http://192.168.1.100:1234/v1
+   http://your-server.com:8080/v1
    ```
 
 ---
@@ -161,14 +230,28 @@ cd semasChatbot
 
 ### 기본 워크플로우
 
-#### 1️⃣ 코드 분석
+#### 0️⃣ 초기 인증 (최초 1회)
+```
+1. 챗봇 창 열기
+2. 인증 팝업에 인증키 입력: semas1@3
+3. 인증 성공 후 챗봇 사용 가능
+```
+
+#### 1️⃣ 서버 설정 (선택사항)
+```
+1. 🌐 URL 버튼 클릭
+2. LM Studio 서버 주소 입력
+3. 유효성 검증 후 적용
+```
+
+#### 2️⃣ 코드 분석
 ```
 1. 코드 선택 → 우클릭 → "Send Selection to Chat"
    또는
 2. 챗봇 창에서 "전체 파일 분석" 버튼 클릭
 ```
 
-#### 2️⃣ AI와 대화
+#### 3️⃣ AI와 대화
 ```
 💬 질문 예시:
    - "이 함수의 목적이 무엇인가요?"
@@ -176,7 +259,7 @@ cd semasChatbot
    - "버그가 있는지 확인해주세요"
 ```
 
-#### 3️⃣ 코드 수정 요청
+#### 4️⃣ 코드 수정 요청
 ```
 🛠️ 수정 예시:
    - "이 메서드에 주석을 추가해주세요"
@@ -184,7 +267,7 @@ cd semasChatbot
    - "전체 파일을 Clean Code 원칙에 맞게 리팩토링해주세요"
 ```
 
-#### 4️⃣ 변경사항 적용
+#### 5️⃣ 변경사항 적용
 ```
 1. Diff 창에서 변경사항 검토
 2. "적용" 또는 "거절" 선택
@@ -219,19 +302,30 @@ AI: 자동으로 테스트 메서드와 엣지 케이스 생성
 
 #### **챗봇 툴 윈도우**
 ```
-┌─────────────────────────────────┐
-│ [Prompt] [전체 파일 분석]        │
-├─────────────────────────────────┤
-│                                 │
-│   채팅 기록 영역                │
-│                                 │
-├─────────────────────────────────┤
-│ 📁 선택된 파일: Example.kt (50줄) │
-│ ┌─────────────────────────────┐ │
-│ │ 메시지 입력 영역             │ │
-│ └─────────────────────────────┘ │
-│ [Send] [Reset]                  │
-└─────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│ [⚙️ Prompt] [🌐 URL] [🔐 인증] [📄 전체 분석] │
+├─────────────────────────────────────────────┤
+│                                             │
+│   채팅 기록 영역                            │
+│                                             │
+├─────────────────────────────────────────────┤
+│ 📁 선택된 파일: Example.kt (50줄)            │
+│ ┌─────────────────────────────────────────┐ │
+│ │ 메시지 입력 영역                        │ │
+│ └─────────────────────────────────────────┘ │
+│ [📤 Send] [🔄 Reset]                      │
+└─────────────────────────────────────────────┘
+```
+
+#### **버튼 기능 설명**
+```
+⚙️ Prompt: AI 시스템 프롬프트 설정
+🌐 URL: LM Studio 서버 주소 변경
+🔐 인증: 사용자 인증 관리
+📄 전체 분석: 현재 파일 전체 컨텍스트 설정
+📤 Send: 메시지 전송
+🔄 Reset: 대화 및 인증 상태 초기화
+📖 가이드: 사용자 가이드 열기
 ```
 
 #### **Diff 뷰어**
@@ -260,15 +354,18 @@ AI: 자동으로 테스트 메서드와 엣지 케이스 생성
 ```
 semasChatbot/
 ├── src/main/kotlin/org/dev/semaschatbot/
-│   ├── ChatService.kt                 # 핵심 비즈니스 로직
-│   ├── LmStudioClient.kt              # LLM 서버 통신
-│   ├── LLMChatToolWindowFactory.kt    # UI 컴포넌트 팩토리
+│   ├── ChatService.kt                 # 핵심 비즈니스 로직 & 인증 관리
+│   ├── LmStudioClient.kt              # LLM 서버 통신 & URL 관리
+│   ├── LLMChatToolWindowFactory.kt    # UI 컴포넌트 팩토리 & 인증 UI
 │   ├── SendSelectionToChatAction.kt   # 컨텍스트 메뉴 액션
 │   └── CodeActionLineMarkerProvider.kt # 라인 마커 프로바이더
-├── src/main/resources/META-INF/
-│   ├── plugin.xml                     # 플러그인 설정
-│   ├── pluginIcon.svg                 # 플러그인 아이콘
-│   └── MessagesBundle.properties      # 다국어 지원
+├── src/main/resources/
+│   ├── config.properties              # 🆕 인증키 및 설정 파일
+│   ├── USER_GUIDE.md                  # 사용자 가이드
+│   └── META-INF/
+│       ├── plugin.xml                 # 플러그인 설정
+│       ├── pluginIcon.svg             # 플러그인 아이콘
+│       └── MessagesBundle.properties  # 다국어 지원
 ├── build.gradle.kts                   # 빌드 설정
 └── README.md                          # 프로젝트 문서
 ```
@@ -281,17 +378,26 @@ classDiagram
         -apiClient: LmStudioClient
         -pendingChanges: List<PendingChange>
         -pendingFileChange: PendingFileChange?
+        -isAuthenticated: Boolean
+        -configProperties: Properties?
         +sendChatRequestToLLM(userInput: String)
         +setSelectionContext(code: String, fileInfo: String)
         +setFullFileContext()
         +applyChange(change: PendingChange)
         +rejectChange(change: PendingChange)
+        +authenticateUser(inputKey: String): Boolean
+        +resetAuthentication()
+        +requiresAuthentication(): Boolean
+        +setLmStudioUrl(url: String)
+        +getLmStudioUrl(): String
     }
     
     class LmStudioClient {
         -baseUrl: String
         -client: OkHttpClient
         +sendChatRequest(message: String, systemMessage: String): String?
+        +setBaseUrl(url: String)
+        +getBaseUrl(): String
     }
     
     class PendingChange {
@@ -442,6 +548,8 @@ curl -X POST http://localhost:1234/v1/chat/completions \
 - ✅ 전체 파일 수정 (차분 기반)
 - ✅ Diff 뷰어
 - ✅ 라인 마커
+- ✅ 🆕 인증 시스템 (인증키 기반 접근 제어)
+- ✅ 🆕 동적 서버 URL 설정
 
 ### v0.2.0 (계획)
 - 🔄 다중 LLM 서버 지원
