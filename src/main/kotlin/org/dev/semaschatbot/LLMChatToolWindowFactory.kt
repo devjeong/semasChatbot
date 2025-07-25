@@ -462,8 +462,23 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
     }
 
     /**
+     * 웹 라이브러리 파일을 읽어서 문자열로 반환합니다.
+     * @param resourcePath 리소스 경로
+     * @return 파일 내용 문자열
+     */
+    private fun readWebLibResource(resourcePath: String): String {
+        return try {
+            val classLoader = this::class.java.classLoader
+            val resourceStream = classLoader.getResourceAsStream(resourcePath)
+            resourceStream?.bufferedReader()?.use { it.readText() } ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    /**
      * Markdown 콘텐츠를 클라이언트 사이드에서 렌더링하는 HTML 페이지를 생성합니다.
-     * marked.js 라이브러리를 사용하여 브라우저에서 Markdown을 HTML로 변환합니다.
+     * 로컬 웹 라이브러리를 인라인으로 포함하여 폐쇄망에서도 동작합니다.
      * @param markdownContent 원본 Markdown 텍스트
      * @return Markdown 뷰어 HTML 문서
      */
@@ -474,6 +489,16 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             .replace("`", "\\`")
             .replace("$", "\\$")
         
+        // 웹 라이브러리들을 로컬에서 읽어옵니다
+        val markedJs = readWebLibResource("web-libs/js/marked.min.js")
+        val githubMarkdownCss = readWebLibResource("web-libs/css/github-markdown.min.css")
+        val prismCss = readWebLibResource("web-libs/css/prism.min.css")
+        val prismJs = readWebLibResource("web-libs/js/prism.min.js")
+        val prismJavaJs = readWebLibResource("web-libs/js/prism-java.min.js")
+        val prismKotlinJs = readWebLibResource("web-libs/js/prism-kotlin.min.js")
+        val prismJavaScriptJs = readWebLibResource("web-libs/js/prism-javascript.min.js")
+        val prismBashJs = readWebLibResource("web-libs/js/prism-bash.min.js")
+        
         return """
         <!DOCTYPE html>
         <html lang="ko">
@@ -482,19 +507,39 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>소진공 AI 챗봇 사용자 가이드</title>
             
-            <!-- marked.js CDN -->
-            <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+            <!-- GitHub Markdown CSS (인라인) -->
+            <style>
+                $githubMarkdownCss
+            </style>
             
-            <!-- GitHub Markdown CSS -->
-            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5.4.0/github-markdown-light.min.css">
+            <!-- Prism.js CSS (인라인) -->
+            <style>
+                $prismCss
+            </style>
             
-            <!-- Prism.js for syntax highlighting -->
-            <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.min.css" rel="stylesheet">
-            <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
-            <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
-            <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-kotlin.min.js"></script>
-            <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
-            <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-bash.min.js"></script>
+            <!-- marked.js (인라인) -->
+            <script>
+                $markedJs
+            </script>
+            
+            <!-- Prism.js (인라인) -->
+            <script>
+                $prismJs
+            </script>
+            
+            <!-- Prism.js 언어 컴포넌트들 (인라인) -->
+            <script>
+                $prismJavaJs
+            </script>
+            <script>
+                $prismKotlinJs
+            </script>
+            <script>
+                $prismJavaScriptJs
+            </script>
+            <script>
+                $prismBashJs
+            </script>
             
             <style>
                 body {
