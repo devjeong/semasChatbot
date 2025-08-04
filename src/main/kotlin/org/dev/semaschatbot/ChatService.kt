@@ -37,6 +37,16 @@ import java.util.Properties
 import java.io.InputStream
 
 /**
+ * 사용자 입력 타입을 나타내는 열거형입니다.
+ */
+enum class UserInputType {
+    RAG_QUESTION,           // 코드베이스 기반 질문
+    INSTRUCTION,            // 코드 수정/개선 지시
+    CURSOR_CODE_GENERATION, // 커서 위치 코드 생성
+    GENERAL_QUESTION        // 일반적인 질문
+}
+
+/**
  * 제안된 코드 변경 사항을 관리하는 데이터 클래스입니다.
  * @param originalCode 원본 코드 조각
  * @param modifiedCode LLM이 제안한 수정된 코드 조각
@@ -83,6 +93,20 @@ data class LineChange(
 )
 
 /**
+ * 커서 위치에서의 코드 삽입을 관리하는 데이터 클래스입니다.
+ * @param insertLine 코드를 삽입할 라인 번호 (1-based)
+ * @param generatedCode LLM이 생성한 새로운 코드
+ * @param document 변경이 적용될 문서
+ * @param insertOffset 삽입할 위치의 오프셋
+ */
+data class PendingCodeInsertion(
+    val insertLine: Int,
+    val generatedCode: String,
+    val document: com.intellij.openapi.editor.Document,
+    val insertOffset: Int
+)
+
+/**
  * 수정 유형을 나타내는 열거형입니다.
  */
 enum class ChangeOperation {
@@ -96,6 +120,7 @@ enum class ChangeOperation {
 class ChatService(private val project: Project) {
 
     private val apiClient = LmStudioClient()
+    private val codeIndexingService = CodeIndexingService(project)
     var systemMessage: String = "You are a helpful assistant. Please respond in Korean."
 
     var chatPanel: JPanel? = null
@@ -106,11 +131,21 @@ class ChatService(private val project: Project) {
     private var selectedCode: String? = null
     private var selectedFileInfo: String? = null
 
+    // 커서 위치 기반 코드 생성을 위한 컨텍스트 변수들
+    private var cursorLine: Int? = null
+    private var currentLineText: String? = null
+    private var cursorFileInfo: String? = null
+    private var fullFileContent: String? = null
+    private var cursorFileName: String? = null
+
     // 여러 개의 동시 변경 제안을 관리하기 위한 리스트
     val pendingChanges = mutableListOf<PendingChange>()
     
     // 전체 파일 변경 제안을 관리하기 위한 변수
     private var pendingFileChange: PendingFileChange? = null
+
+    // 커서 위치 코드 삽입 제안을 관리하기 위한 변수
+    private var pendingCodeInsertion: PendingCodeInsertion? = null
 
     // 인증 관련 변수들
     private var isAuthenticated: Boolean = false
@@ -149,6 +184,8 @@ class ChatService(private val project: Project) {
         }
     }
 
+    
+
     /**
      * 인증키를 검증합니다.
      * @param inputKey 사용자가 입력한 인증키
@@ -164,6 +201,10 @@ class ChatService(private val project: Project) {
         
         if (isValid) {
             isAuthenticated = true
+            
+            // 인증 성공 시 자동으로 프로젝트 인덱싱 시작
+            sendMessage("✅ 인증이 완료되었습니다! 자동으로 프로젝트 인덱싱을 시작합니다.", isUser = false)
+            startAutoIndexing()
         }
         
         return isValid
@@ -208,11 +249,56 @@ class ChatService(private val project: Project) {
     }
 
     /**
+     * 커서 위치 기반 코드 생성을 위한 컨텍스트를 설정합니다.
+     * @param cursorLine 현재 커서가 있는 라인 번호
+     * @param currentLineText 현재 라인의 텍스트
+     * @param fileInfo 파일 정보
+     * @param fullFileContent 전체 파일 내용
+     * @param totalLines 전체 라인 수
+     * @param fileName 파일 이름
+     */
+    fun setCursorContext(
+        cursorLine: Int,
+        currentLineText: String,
+        fileInfo: String,
+        fullFileContent: String,
+        totalLines: Int,
+        fileName: String
+    ) {
+        this.cursorLine = cursorLine
+        this.currentLineText = currentLineText
+        this.cursorFileInfo = fileInfo
+        this.fullFileContent = fullFileContent
+        this.cursorFileName = fileName
+        
+        ApplicationManager.getApplication().invokeLater {
+            fileInfoLabel?.text = "커서 위치: $fileInfo"
+            fileInfoLabel?.isVisible = true
+        }
+        
+        sendMessage("💡 커서 위치에서 새로운 코드를 생성할 수 있습니다. 원하는 기능을 설명해주세요!", isUser = false)
+    }
+
+    /**
      * 설정된 선택 컨텍스트를 초기화합니다.
      */
     private fun clearSelectionContext() {
         selectedCode = null
         selectedFileInfo = null
+        ApplicationManager.getApplication().invokeLater {
+            fileInfoLabel?.isVisible = false
+        }
+    }
+
+    /**
+     * 설정된 커서 컨텍스트를 초기화합니다.
+     */
+    private fun clearCursorContext() {
+        cursorLine = null
+        currentLineText = null
+        cursorFileInfo = null
+        fullFileContent = null
+        cursorFileName = null
         ApplicationManager.getApplication().invokeLater {
             fileInfoLabel?.isVisible = false
         }
@@ -244,6 +330,102 @@ class ChatService(private val project: Project) {
             sendMessage("활성화된 에디터가 없습니다.", isUser = false)
         }
     }
+
+    /**
+     * 프로젝트 전체를 인덱싱합니다.
+     */
+    fun indexProject() {
+        sendMessage("🔍 프로젝트 인덱싱을 시작합니다...", isUser = false)
+        
+        object : SwingWorker<Int, Void>() {
+            override fun doInBackground(): Int {
+                return codeIndexingService.indexProject()
+            }
+            
+            override fun done() {
+                try {
+                    val chunkCount = get()
+                    val stats = codeIndexingService.getIndexingStats()
+                    
+                    val statsMessage = buildString {
+                        appendLine("✅ 프로젝트 인덱싱이 완료되었습니다!")
+                        appendLine("📊 인덱싱 통계:")
+                        appendLine("  • 전체 코드 조각: ${stats["total_chunks"]}")
+                        appendLine("  • 파일: ${stats["file"]}")
+                        appendLine("  • 클래스: ${stats["class"]}")
+                        appendLine("  • 메서드: ${stats["method"]}")
+                        appendLine("  • 필드: ${stats["field"]}")
+                        appendLine("💡 이제 코드베이스 전체를 참조하여 더 정확한 답변을 제공할 수 있습니다!")
+                    }
+                    
+                    sendMessage(statsMessage, isUser = false)
+                } catch (e: Exception) {
+                    sendMessage("❌ 인덱싱 중 오류가 발생했습니다: ${e.message}", isUser = false)
+                }
+            }
+        }.execute()
+    }
+
+    /**
+     * 인증 성공 시 자동으로 실행되는 프로젝트 인덱싱입니다.
+     * 진행 상황을 상세히 보고합니다.
+     */
+    private fun startAutoIndexing() {
+        object : SwingWorker<Int, String>() {
+            override fun doInBackground(): Int {
+                publish("🔍 프로젝트 파일을 스캔하고 있습니다...")
+                Thread.sleep(500) // UI 업데이트를 위한 짧은 지연
+                
+                publish("📂 지원되는 파일 확장자: java, kt, js, ts, vue, sql, xml, yml, yaml, json")
+                Thread.sleep(500)
+                
+                publish("⚙️ PSI 트리를 분석하여 코드 구조를 파악합니다...")
+                Thread.sleep(500)
+                
+                val chunkCount = codeIndexingService.indexProject()
+                
+                publish("🔧 인덱싱 통계를 생성하고 있습니다...")
+                Thread.sleep(300)
+                
+                return chunkCount
+            }
+            
+            override fun process(chunks: List<String>) {
+                // 진행 상황 메시지들을 실시간으로 전송
+                chunks.forEach { message ->
+                    sendMessage(message, isUser = false)
+                }
+            }
+            
+            override fun done() {
+                try {
+                    val chunkCount = get()
+                    val stats = codeIndexingService.getIndexingStats()
+                    
+                    val completionMessage = buildString {
+                        appendLine("🎉 자동 프로젝트 인덱싱이 완료되었습니다!")
+                        appendLine("")
+                        appendLine("📊 최종 인덱싱 결과:")
+                        appendLine("  ✓ 전체 코드 조각: ${stats["total_chunks"]}개")
+                        appendLine("  ✓ 파일: ${stats["file"]}개")
+                        appendLine("  ✓ 클래스: ${stats["class"]}개")
+                        appendLine("  ✓ 메서드: ${stats["method"]}개")
+                        appendLine("  ✓ 필드: ${stats["field"]}개")
+                        appendLine("")
+                        appendLine("💡 이제 프로젝트 코드베이스를 기반으로 한 질문에 정확하게 답변할 수 있습니다!")
+                        appendLine("🚀 프로젝트에 관한 궁금한 점을 언제든 물어보세요!")
+                    }
+                    
+                    sendMessage(completionMessage, isUser = false)
+                } catch (e: Exception) {
+                    sendMessage("❌ 자동 인덱싱 중 오류가 발생했습니다: ${e.message}", isUser = false)
+                    sendMessage("🔧 수동으로 '프로젝트 인덱싱' 버튼을 눌러 다시 시도해보세요.", isUser = false)
+                }
+            }
+        }.execute()
+    }
+
+
 
     /**
      * 메신저 스타일의 채팅 UI에 메시지를 추가합니다.
@@ -380,13 +562,26 @@ class ChatService(private val project: Project) {
     }
 
     /**
-     * 사용자 입력 유형을 분류합니다. (질문, 부분수정, 전체수정, 일반)
+     * 사용자 입력 유형을 분류합니다. (질문, 부분수정, 전체수정, 커서위치생성, RAG질문, 일반)
      */
-    private enum class UserInputType { QUESTION, INSTRUCTION, FULL_FILE_INSTRUCTION, GENERAL }
-    private fun classifyInput(userInput: String): UserInputType {
-        val instructionKeywords = listOf("add", "change", "refactor", "implement", "create", "modify", "improve", "fix", "correct", "추가해", "바꿔줘", "수정해", "리팩토링", "개선해", "고쳐줘", "만들어줘","변경해")
+    private enum class UserInputType { QUESTION, INSTRUCTION, FULL_FILE_INSTRUCTION, CURSOR_CODE_GENERATION, RAG_QUESTION, GENERAL }
+    /*private fun classifyInput(userInput: String): UserInputType {
+        val instructionKeywords = listOf("add", "change", "refactor", "implement", "create", "modify", "improve", "fix", "correct", "추가해", "바꿔줘", "수정해", "리팩토링", "개선해", "고쳐줘", "만들어줘","변경해", "작성해")
         val fullFileKeywords = listOf("전체", "파일", "모든", "전부", "완전히", "처음부터", "새로", "전면", "전체적으로", "whole", "entire", "complete", "full", "all")
+        val questionKeywords = listOf("어떻게", "무엇", "언제", "어디서", "왜", "어떤", "설명", "알려줘", "찾아줘", "검색", "how", "what", "when", "where", "why", "which", "explain", "tell", "find", "search")
         val lowerInput = userInput.trim().lowercase()
+        
+        // 커서 컨텍스트가 설정되어 있는 경우 커서 위치 코드 생성으로 분류
+        if (cursorLine != null) {
+            return UserInputType.CURSOR_CODE_GENERATION
+        }
+        
+        // 인덱싱된 코드가 있고 질문 키워드가 포함된 경우 RAG 질문으로 분류
+        if (codeIndexingService.getAllCodeChunks().isNotEmpty() && 
+            questionKeywords.any { lowerInput.contains(it) } &&
+            selectedCode == null) {  // 선택된 코드가 없는 경우만
+            return UserInputType.RAG_QUESTION
+        }
         
         if (instructionKeywords.any { lowerInput.contains(it) }) {
             // 전체 파일 수정 키워드가 포함되어 있고, 선택된 코드가 전체 파일인 경우
@@ -396,7 +591,7 @@ class ChatService(private val project: Project) {
             return UserInputType.INSTRUCTION
         }
         return UserInputType.GENERAL
-    }
+    }*/
     
     /**
      * 선택된 코드가 전체 파일인지 확인합니다.
@@ -427,6 +622,81 @@ class ChatService(private val project: Project) {
 
         val inputType = classifyInput(userInput)
         val prompt = when {
+            inputType == UserInputType.RAG_QUESTION -> {
+                // RAG 기반 질문 처리
+                val relevantChunks = searchRelevantCode(userInput, 5)
+                val contextCode = if (relevantChunks.isNotEmpty()) {
+                    buildString {
+                        appendLine("다음은 질문과 관련된 프로젝트 코드입니다:")
+                        appendLine()
+                        relevantChunks.forEachIndexed { index, chunk ->
+                            appendLine("=== 참조 코드 ${index + 1}: ${chunk.fileName} (${chunk.type.name}) ===")
+                            appendLine("위치: ${chunk.filePath}:${chunk.startLine}-${chunk.endLine}")
+                            appendLine("시그니처: ${chunk.signature}")
+                            appendLine()
+                            appendLine("```")
+                            appendLine(chunk.content.take(1000)) // 너무 긴 코드는 잘라서 표시
+                            if (chunk.content.length > 1000) appendLine("... (코드가 길어서 일부만 표시)")
+                            appendLine("```")
+                            appendLine()
+                        }
+                    }
+                } else {
+                    "관련 코드를 찾을 수 없습니다."
+                }
+                
+                """
+                You are an expert software developer and code analyst specializing in Java, Kotlin, Vue.js, and Tibero DB.
+                Your task is to answer the user's question based on the provided project code context.
+                
+                $contextCode
+                
+                User question: $userInput
+                
+                Please provide a detailed answer based on the code context above. 
+                Include specific references to the code when relevant, and explain how the code works.
+                
+                You MUST start your response with "[RAG_QUESTION] " followed by your answer.
+                Always respond in Korean.
+                """.trimIndent()
+            }
+            inputType == UserInputType.CURSOR_CODE_GENERATION -> {
+                // 커서 위치 기반 새로운 코드 생성
+                val lines = fullFileContent?.lines() ?: listOf()
+                val numberedContent = lines.mapIndexed { index, line -> 
+                    "${index + 1}: $line" 
+                }.joinToString("\n")
+                
+                """
+                You are an expert software developer specializing in Java, Kotlin, Vue.js, and Tibero DB.
+                Your task is to generate NEW code that should be inserted at the current cursor position.
+                This is NOT about modifying existing code, but creating NEW functionality.
+
+                You MUST respond ONLY with the new code in this exact format:
+
+                [NewCode]
+                (The new code to be inserted goes here)
+
+                Current file context with line numbers:
+                ```
+                $numberedContent
+                ```
+
+                Current cursor position: Line ${cursorLine}
+                Current line content: "${currentLineText}"
+                File: ${cursorFileInfo}
+
+                User request: $userInput
+
+                Important guidelines:
+                1. Generate NEW code that fits naturally at the cursor position
+                2. Maintain proper code structure and formatting
+                3. Consider the surrounding code context for proper integration
+                4. Follow best practices and coding conventions for ${cursorFileName}
+                5. Ensure the new code is syntactically correct and follows the project's style
+                6. If imports are needed, include them as part of the generated code
+                """.trimIndent()
+            }
             inputType == UserInputType.FULL_FILE_INSTRUCTION && codeContext != null -> {
                 // 전체 파일 수정 요청 (차분만 받기)
                 val lines = codeContext.lines()
@@ -494,11 +764,20 @@ class ChatService(private val project: Project) {
             }
             else -> {
                 // 그 외의 경우, 일반적인 프롬프트 사용
-                if (codeContext != null) {
+                val basePrompt = if (codeContext != null) {
                     "User selected code from $fileContext: \n```\n$codeContext\n```\n\nUser query: $userInput"
                 } else {
                     userInput
                 }
+                
+                """
+                You are an expert software developer and code analyst specializing in Java, Kotlin, Vue.js, and Tibero DB.
+                
+                $basePrompt
+                
+                You MUST start your response with "[${inputType.name}] " followed by your answer.
+                Always respond in Korean.
+                """.trimIndent()
             }
         }
 
@@ -513,6 +792,17 @@ class ChatService(private val project: Project) {
                     val response = get()
                     if (response != null) {
                         when (inputType) {
+                            UserInputType.RAG_QUESTION -> {
+                                // RAG 기반 답변 처리 (일반 텍스트 응답)
+                                sendMessage(response, isUser = false)
+                            }
+                            UserInputType.CURSOR_CODE_GENERATION -> {
+                                if (editor != null) {
+                                    handleCursorCodeGenerationResponse(response, editor)
+                                } else {
+                                    sendMessage("에디터가 활성화되지 않았습니다.", isUser = false)
+                                }
+                            }
                             UserInputType.FULL_FILE_INSTRUCTION -> {
                                 if (editor != null) {
                                     handleFullFileInstructionResponse(response, editor)
@@ -539,6 +829,7 @@ class ChatService(private val project: Project) {
                     sendMessage("오류가 발생했습니다: ${e.message}", isUser = false)
                 } finally {
                     clearSelectionContext()
+                    clearCursorContext()
                 }
             }
         }.execute()
@@ -719,6 +1010,55 @@ class ChatService(private val project: Project) {
             }
         } else {
             sendMessage("수정 제안을 파싱할 수 없습니다. 받은 응답:\n$response", isUser = false)
+        }
+    }
+
+    /**
+     * LLM의 커서 위치 코드 생성 응답을 파싱하고 처리합니다.
+     * @param response LLM 응답 문자열
+     * @param editor 현재 활성화된 에디터
+     */
+    private fun handleCursorCodeGenerationResponse(response: String, editor: Editor) {
+        val document = editor.document
+        val pattern = Pattern.compile("\\[NewCode\\](.*)", Pattern.DOTALL)
+        val matcher = pattern.matcher(response)
+
+        if (matcher.find()) {
+            var generatedCode = matcher.group(1).trim()
+            
+            // 코드 블록 형태 (```language ... ```) 처리
+            val codeBlockPattern = Pattern.compile("```(?:[a-zA-Z]+\\s*)?([\\s\\S]*?)```", Pattern.DOTALL)
+            val codeBlockMatcher = codeBlockPattern.matcher(generatedCode)
+            if (codeBlockMatcher.find()) {
+                generatedCode = codeBlockMatcher.group(1).trim()
+            }
+            
+            val currentCursorLine = cursorLine ?: return
+            
+            // 커서 위치의 라인 시작 오프셋 계산 (새 코드를 삽입할 위치)
+            val insertLineIndex = currentCursorLine - 1 // 0-based index
+            val insertOffset = if (insertLineIndex < document.lineCount) {
+                document.getLineEndOffset(insertLineIndex)
+            } else {
+                document.textLength
+            }
+
+            val codeInsertion = PendingCodeInsertion(
+                insertLine = currentCursorLine,
+                generatedCode = generatedCode,
+                document = document,
+                insertOffset = insertOffset
+            )
+            
+            pendingCodeInsertion = codeInsertion
+
+            // 새 코드 삽입 diff 창 표시 (원본은 빈값, 수정에는 새 코드)
+            ApplicationManager.getApplication().invokeLater {
+                showCodeInsertionDiffWindow("", generatedCode, codeInsertion)
+                sendMessage("새로운 코드가 생성되었습니다. diff 창에서 확인 후 '적용' 또는 '거절'을 선택해주세요.", isUser = false)
+            }
+        } else {
+            sendMessage("코드 생성 제안을 파싱할 수 없습니다. 받은 응답:\n$response", isUser = false)
         }
     }
 
@@ -969,5 +1309,275 @@ class ChatService(private val project: Project) {
         ApplicationManager.getApplication().invokeLater {
             com.intellij.codeInsight.daemon.DaemonCodeAnalyzer.getInstance(project).restart()
         }
+    }
+
+    /**
+     * 코드 삽입을 위한 diff 창을 표시합니다. 원본은 빈값, 수정에는 새로운 코드가 표시됩니다.
+     * @param originalCode 원본 코드 (빈값)
+     * @param newCode 생성된 새로운 코드
+     * @param codeInsertion 적용/거절할 PendingCodeInsertion 객체
+     */
+    private fun showCodeInsertionDiffWindow(originalCode: String, newCode: String, codeInsertion: PendingCodeInsertion) {
+        val diffContentFactory = DiffContentFactory.getInstance()
+        val leftContent = diffContentFactory.create(originalCode)
+        val rightContent = diffContentFactory.create(newCode)
+
+        val diffRequest = SimpleDiffRequest(
+            "새 코드 삽입 - 라인 ${codeInsertion.insertLine}",  // 창 제목
+            leftContent,           // 왼쪽: 빈값 (원본 없음)
+            rightContent,          // 오른쪽: 새로 생성된 코드
+            "Original (Empty)",    // 왼쪽 라벨
+            "New Code"             // 오른쪽 라벨
+        )
+
+        // 커스텀 대화상자로 diff 창 표시
+        showCustomCodeInsertionDiffDialog(diffRequest, codeInsertion)
+    }
+
+    /**
+     * 코드 삽입을 위한 적용/거절 버튼이 있는 커스텀 diff 대화상자를 표시합니다.
+     */
+    private fun showCustomCodeInsertionDiffDialog(diffRequest: SimpleDiffRequest, codeInsertion: PendingCodeInsertion) {
+        ApplicationManager.getApplication().invokeLater {
+            val dialog = object : com.intellij.openapi.ui.DialogWrapper(project) {
+                private var diffPanel: com.intellij.diff.DiffRequestPanel? = null
+                
+                init {
+                    title = "새 코드 삽입 제안 - 라인 ${codeInsertion.insertLine}"
+                    init()
+                }
+
+                override fun createCenterPanel(): javax.swing.JComponent? {
+                    // DialogWrapper의 disposable을 부모로 사용하여 메모리 누수 방지
+                    diffPanel = DiffManager.getInstance().createRequestPanel(project, disposable, null)
+                    diffPanel?.setRequest(diffRequest)
+                    return diffPanel?.component
+                }
+
+                override fun createActions(): Array<javax.swing.Action> {
+                    val applyAction = object : javax.swing.AbstractAction("적용") {
+                        override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                            applyCodeInsertion(codeInsertion)
+                            sendMessage("새 코드가 성공적으로 삽입되었습니다.", isUser = false)
+                            close(OK_EXIT_CODE)
+                        }
+                    }
+
+                    val rejectAction = object : javax.swing.AbstractAction("거절") {
+                        override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                            rejectCodeInsertion()
+                            sendMessage("코드 삽입이 거절되었습니다.", isUser = false)
+                            close(CANCEL_EXIT_CODE)
+                        }
+                    }
+
+                    val cancelAction = object : javax.swing.AbstractAction("취소") {
+                        override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                            close(CANCEL_EXIT_CODE)
+                        }
+                    }
+
+                    return arrayOf(applyAction, rejectAction, cancelAction)
+                }
+
+                override fun getPreferredSize(): java.awt.Dimension {
+                    return java.awt.Dimension(800, 600)
+                }
+
+                override fun dispose() {
+                    // 명시적으로 부모의 dispose를 호출하여 리소스 정리
+                    super.dispose()
+                }
+            }
+
+            dialog.show()
+        }
+    }
+
+    /**
+     * 생성된 코드를 커서 위치에 삽입합니다.
+     * @param codeInsertion 적용할 PendingCodeInsertion 객체
+     */
+    private fun applyCodeInsertion(codeInsertion: PendingCodeInsertion) {
+        // WriteCommandAction을 사용하여 문서에 코드 삽입
+        WriteCommandAction.runWriteCommandAction(project) {
+            val insertText = "\n${codeInsertion.generatedCode}"
+            codeInsertion.document.insertString(codeInsertion.insertOffset, insertText)
+        }
+        
+        // 정리
+        pendingCodeInsertion = null
+        ApplicationManager.getApplication().invokeLater {
+            com.intellij.codeInsight.daemon.DaemonCodeAnalyzer.getInstance(project).restart()
+        }
+    }
+
+    /**
+     * 코드 삽입을 거절합니다.
+     */
+    private fun rejectCodeInsertion() {
+        // 단순히 정리만 수행
+        pendingCodeInsertion = null
+    }
+
+    /**
+     * 사용자 입력을 분류하여 적절한 처리 타입을 결정합니다.
+     * @param userInput 사용자 입력 문자열
+     * @return UserInputType 열거형 값
+     */
+    private fun classifyInput(userInput: String): UserInputType {
+        val input = userInput.lowercase().trim()
+        
+        // 커서 위치 기반 코드 생성 요청 감지
+        if (cursorLine != null && (
+            input.contains("생성") || input.contains("만들어") || input.contains("작성") || 
+            input.contains("추가") || input.contains("create") || input.contains("generate") ||
+            input.contains("코드") && (input.contains("새로") || input.contains("new"))
+        )) {
+            return UserInputType.CURSOR_CODE_GENERATION
+        }
+        
+        // 코드 수정/개선 지시 감지 (선택된 코드가 있는 경우)
+        if (selectedCode != null && (
+            input.contains("수정") || input.contains("개선") || input.contains("바꿔") || 
+            input.contains("변경") || input.contains("고쳐") || input.contains("refactor") ||
+            input.contains("modify") || input.contains("change") || input.contains("fix")
+        )) {
+            return UserInputType.INSTRUCTION
+        }
+        
+        // 코드베이스 관련 질문 키워드 감지
+        val codebaseQuestionKeywords = listOf(
+            "어떻게", "어디서", "무엇", "언제", "왜",
+            "how", "where", "what", "when", "why",
+            "함수", "메서드", "클래스", "변수", "필드",
+            "구현", "작동", "동작", "처리", "사용",
+            "프로젝트", "코드", "파일", "로직",
+            "explain", "show", "find", "search"
+        )
+        
+        val hasCodebaseKeyword = codebaseQuestionKeywords.any { keyword ->
+            input.contains(keyword)
+        }
+        
+        // 질문형 패턴 감지
+        val questionPatterns = listOf(
+            "\\?$", "\\?\\s*$",  // 물음표로 끝남
+            "^어떻게", "^어디", "^무엇", "^언제", "^왜",
+            "^how", "^where", "^what", "^when", "^why"
+        )
+        
+        val hasQuestionPattern = questionPatterns.any { pattern ->
+            Regex(pattern).containsMatchIn(input)
+        }
+        
+        // 코드베이스 관련 질문으로 분류
+        if (hasCodebaseKeyword || hasQuestionPattern) {
+            return UserInputType.RAG_QUESTION
+        }
+        
+        // 기본값은 일반 질문
+        return UserInputType.GENERAL
+    }
+    
+    /**
+     * 인덱싱된 코드에서 사용자 질문과 관련된 코드 조각들을 검색합니다.
+     * @param query 검색 쿼리 (사용자 질문)
+     * @param limit 반환할 최대 결과 수
+     * @return 관련성 높은 순으로 정렬된 코드 조각 리스트
+     */
+    fun searchRelevantCode(query: String, limit: Int = 5): List<CodeChunk> {
+        val allChunks = codeIndexingService.getAllCodeChunks()
+        
+        if (allChunks.isEmpty()) {
+            return emptyList()
+        }
+        
+        val queryTerms = extractSearchTerms(query)
+        
+        // 각 코드 조각에 대해 관련성 점수를 계산
+        val scoredChunks = allChunks.map { chunk ->
+            val score = calculateRelevanceScore(chunk, queryTerms)
+            Pair(chunk, score)
+        }.filter { it.second > 0 } // 점수가 0인 것은 제외
+          .sortedByDescending { it.second } // 점수 높은 순으로 정렬
+          .take(limit) // 상위 N개만 선택
+        
+        return scoredChunks.map { it.first }
+    }
+    
+    /**
+     * 검색 쿼리에서 핵심 검색어들을 추출합니다.
+     * @param query 원본 쿼리
+     * @return 검색어 리스트
+     */
+    private fun extractSearchTerms(query: String): List<String> {
+        val stopWords = setOf(
+            "어떻게", "어디서", "무엇을", "언제", "왜", "그", "이", "그것", "그런", "이런",
+            "하는", "있는", "되는", "되어", "에서", "에게", "으로", "를", "을", "가", "이", "은", "는",
+            "how", "where", "what", "when", "why", "the", "a", "an", "is", "are", "was", "were",
+            "do", "does", "did", "can", "could", "should", "would", "will", "have", "has", "had"
+        )
+        
+        return query.lowercase()
+            .split(Regex("\\W+")) // 단어가 아닌 문자로 분할
+            .filter { it.length > 2 && !stopWords.contains(it) } // 불용어 제거 및 짧은 단어 제거
+            .distinct()
+    }
+    
+    /**
+     * 코드 조각과 검색어들 간의 관련성 점수를 계산합니다.
+     * @param chunk 코드 조각
+     * @param queryTerms 검색어 리스트
+     * @return 관련성 점수 (0~100)
+     */
+    private fun calculateRelevanceScore(chunk: CodeChunk, queryTerms: List<String>): Double {
+        if (queryTerms.isEmpty()) return 0.0
+        
+        var score = 0.0
+        val content = chunk.content.lowercase()
+        val signature = chunk.signature.lowercase()
+        val summary = chunk.summary.lowercase()
+        val fileName = chunk.fileName.lowercase()
+        
+        for (term in queryTerms) {
+            val termLower = term.lowercase()
+            
+            // 시그니처에서 발견되면 높은 점수
+            if (signature.contains(termLower)) {
+                score += 15.0
+            }
+            
+            // 파일명에서 발견되면 중간 점수
+            if (fileName.contains(termLower)) {
+                score += 10.0
+            }
+            
+            // 요약에서 발견되면 중간 점수
+            if (summary.contains(termLower)) {
+                score += 8.0
+            }
+            
+            // 코드 내용에서 발견되면 기본 점수
+            if (content.contains(termLower)) {
+                score += 5.0
+            }
+            
+            // 정확한 단어 매치에 대한 보너스
+            if (content.contains("\\b$termLower\\b".toRegex())) {
+                score += 3.0
+            }
+        }
+        
+        // 코드 타입에 따른 가중치
+        val typeWeight = when (chunk.type) {
+            CodeType.CLASS -> 1.2
+            CodeType.METHOD -> 1.1
+            CodeType.INTERFACE -> 1.1
+            CodeType.FILE -> 0.8
+            else -> 1.0
+        }
+        
+        return score * typeWeight
     }
 }

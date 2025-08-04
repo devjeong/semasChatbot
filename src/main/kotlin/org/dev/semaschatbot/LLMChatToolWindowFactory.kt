@@ -124,7 +124,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         leftButtonPanel.add(promptButton)
         leftButtonPanel.add(urlButton)
         leftButtonPanel.add(authButton)
-        leftButtonPanel.add(analyzeFileButton)
+        /*leftButtonPanel.add(analyzeFileButton)*/
         buttonContainerPanel.add(leftButtonPanel, BorderLayout.WEST)
         
         val rightButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 0))

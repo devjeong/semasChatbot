@@ -50,6 +50,14 @@
                 description="Sends the currently selected code to the Semas Chatbot.">
             <add-to-group group-id="EditorPopupMenu" anchor="first"/>
         </action>
+        
+        <action id="org.dev.semaschatbot.AddCodeAtCursor"
+                class="org.dev.semaschatbot.AddCodeAtCursorAction"
+                text="Generate Code at Cursor"
+                description="Generates new code at the current cursor position using AI.">
+            <keyboard-shortcut keymap="$default" first-keystroke="shift ctrl N"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="after" relative-to-action="org.dev.semaschatbot.SendSelectionToChat"/>
+        </action>
     </actions>
 </idea-plugin>
 
