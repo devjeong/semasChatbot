@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit
  * LM Studio의 Chat Completions API를 사용하여 챗봇 요청을 보내고 응답을 처리합니다.
  */
 class LmStudioClient(
-    private var baseUrl: String = "http://172.30.1.66:1234/v1" // LM Studio 서버의 기본 URL. 필요에 따라 변경 가능합니다.
+    private var baseUrl: String = "http://192.168.18.52:7777/v1" // LM Studio 서버의 기본 URL. 필요에 따라 변경 가능합니다.
 ) {
 
     private val client = OkHttpClient.Builder() // HTTP 요청을 보내기 위한 OkHttpClient 인스턴스
@@ -91,5 +91,120 @@ class LmStudioClient(
         }
     }
 
-    
+    /**
+     * 스트리밍 모드 채팅 요청. 델타가 수신될 때마다 onDelta 호출, 완료 시 onComplete, 오류 시 onError 호출.
+     * LM Studio(OpenAI 호환) SSE 포맷을 우선 시도하고, 실패 시 전체 본문을 파싱하여 단발 콜백합니다.
+     */
+    fun sendChatRequestStream(
+        userMessage: String,
+        systemMessage: String,
+        modelId: String = "default-model",
+        onDelta: (String) -> Unit,
+        onComplete: () -> Unit,
+        onError: (Exception) -> Unit
+    ) {
+        val messages = listOf(
+            mapOf("role" to "system", "content" to systemMessage),
+            mapOf("role" to "user", "content" to userMessage)
+        )
+
+        val requestBodyMap = mapOf(
+            "model" to modelId,
+            "messages" to messages,
+            "temperature" to 0.7,
+            "stream" to true
+        )
+        val requestBodyJson = gson.toJson(requestBodyMap)
+
+        val request = Request.Builder()
+            .url("$baseUrl/chat/completions")
+            .post(RequestBody.create("application/json".toMediaTypeOrNull(), requestBodyJson))
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                onError(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use { resp ->
+                    if (!resp.isSuccessful) {
+                        onError(IOException("Unexpected code ${resp.code}"))
+                        return
+                    }
+                    try {
+                        val body = resp.body ?: run {
+                            onComplete()
+                            return
+                        }
+                        val source = body.source()
+                        while (true) {
+                            val line = source.readUtf8Line() ?: break
+                            val trimmed = line.trim()
+                            if (trimmed.isEmpty()) continue
+                            if (trimmed.startsWith("data:")) {
+                                val payload = trimmed.removePrefix("data:").trim()
+                                if (payload == "[DONE]") break
+                                val delta = extractContentFromChunk(payload)
+                                if (!delta.isNullOrEmpty()) onDelta(delta)
+                            } else {
+                                val delta = extractContentFromChunk(trimmed)
+                                if (!delta.isNullOrEmpty()) onDelta(delta)
+                            }
+                        }
+                        onComplete()
+                    } catch (ex: Exception) {
+                        try {
+                            val fallback = response.body?.string()
+                            if (!fallback.isNullOrEmpty()) {
+                                val content = extractFullContentOrRaw(fallback)
+                                if (!content.isNullOrEmpty()) onDelta(content)
+                                onComplete()
+                            } else {
+                                onError(ex)
+                            }
+                        } catch (ex2: Exception) {
+                            onError(ex2)
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    private fun extractContentFromChunk(jsonLine: String): String? {
+        return try {
+            val json = gson.fromJson(jsonLine, JsonObject::class.java)
+            val choices = json.getAsJsonArray("choices") ?: return null
+            if (choices.size() == 0) return null
+            val first = choices[0].asJsonObject
+            when {
+                first.has("delta") && first.getAsJsonObject("delta").has("content") ->
+                    first.getAsJsonObject("delta").get("content").asString
+                first.has("message") && first.getAsJsonObject("message").has("content") ->
+                    first.getAsJsonObject("message").get("content").asString
+                first.has("text") -> first.get("text").asString
+                else -> null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun extractFullContentOrRaw(jsonText: String): String? {
+        return try {
+            val json = gson.fromJson(jsonText, JsonObject::class.java)
+            val choices = json.getAsJsonArray("choices") ?: return jsonText
+            if (choices.size() == 0) return jsonText
+            val first = choices[0].asJsonObject
+            when {
+                first.has("message") && first.getAsJsonObject("message").has("content") ->
+                    first.getAsJsonObject("message").get("content").asString
+                first.has("text") -> first.get("text").asString
+                else -> jsonText
+            }
+        } catch (e: Exception) {
+            jsonText
+        }
+    }
 }

@@ -61,18 +61,29 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         // 툴 윈도우의 메인 패널을 생성합니다. BorderLayout을 사용하여 컴포넌트들을 배치합니다.
         val panel = JPanel(BorderLayout())
         panel.background = Color(245, 245, 245) // 패널의 배경색을 연한 회색으로 설정합니다.
+        panel.preferredSize = Dimension(500, 700)  // 툴 윈도우 기본 크기 설정
+        panel.minimumSize = Dimension(400, 500)    // 최소 크기 설정
 
         // 메신저 스타일의 채팅 패널을 생성합니다.
         val chatPanel = JPanel()
         chatPanel.layout = BoxLayout(chatPanel, BoxLayout.Y_AXIS)
         chatPanel.background = Color.WHITE
-        chatPanel.border = EmptyBorder(5, 8, 5, 8)
+        chatPanel.border = EmptyBorder(10, 12, 10, 12)
         
         val scrollPane = JBScrollPane(chatPanel)
         scrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
         scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         scrollPane.background = Color.WHITE
         scrollPane.border = LineBorder(Color(220, 220, 220), 1)
+        
+        // 스크롤 패널 크기 설정 개선
+        scrollPane.preferredSize = Dimension(400, 500)  // 기본 크기 설정
+        scrollPane.minimumSize = Dimension(300, 200)    // 최소 크기 설정
+        
+        // 스크롤 속도 개선
+        scrollPane.verticalScrollBar.unitIncrement = 16
+        scrollPane.verticalScrollBar.blockIncrement = 64
+        
         panel.add(scrollPane, BorderLayout.CENTER)
 
         // 사용자 입력을 위한 패널과 컴포넌트들을 생성합니다.
@@ -87,7 +98,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         inputPanel.add(loadingLabel, BorderLayout.WEST) // 입력 패널의 왼쪽에 로딩 인디케이터 추가
         
         val inputField = JBTextArea() // 사용자 메시지를 입력할 텍스트 필드입니다.
-        inputField.rows = 3
+        inputField.rows = 4  // 입력 필드 높이 증가
         inputField.lineWrap = true
         inputField.wrapStyleWord = true
         inputField.background = Color.WHITE
@@ -97,8 +108,10 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val inputScrollPane = JBScrollPane(inputField)
         inputScrollPane.border = CompoundBorder(
             LineBorder(Color(200, 200, 200), 1, true),
-            EmptyBorder(8, 12, 8, 12)
+            EmptyBorder(10, 15, 10, 15)  // 입력 필드 패딩 증가
         )
+        inputScrollPane.preferredSize = Dimension(350, 120)  // 입력 필드 크기 설정
+        inputScrollPane.minimumSize = Dimension(200, 80)     // 최소 크기 설정
         // 모던한 스타일의 버튼들을 생성합니다.
         val sendButton = createStyledButton("📤 전송", Color(52, 152, 219), Color.WHITE)
         val resetButton = createStyledButton("🔄 초기화", Color(231, 76, 60), Color.WHITE)
@@ -325,6 +338,11 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             chatPanel.removeAll() // 모든 메시지 패널을 제거합니다.
             chatPanel.revalidate()
             chatPanel.repaint()
+            
+            // 스크롤을 최상단으로 이동
+            scrollPane?.let { scroll ->
+                scroll.verticalScrollBar.value = 0
+            }
             
             // 인증 상태도 초기화
             chatService.resetAuthentication()
