@@ -36,7 +36,7 @@
     <!-- Extension points defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="소진공개발AI(Beta)" anchor="right" factoryClass="org.dev.semaschatbot.LLMChatToolWindowFactory" icon="/META-INF/pluginIcon.svg"/>
+        <toolWindow id="Protein26" anchor="right" factoryClass="org.dev.semaschatbot.LLMChatToolWindowFactory" icon="/META-INF/pluginIcon.svg"/>
         <notificationGroup id="LLMNoti" displayType="BALLOON"/>
         <codeInsight.lineMarkerProvider language="" implementationClass="org.dev.semaschatbot.CodeActionLineMarkerProvider"/>
     </extensions>

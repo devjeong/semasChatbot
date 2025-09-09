@@ -446,7 +446,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         titlePanel.add(iconLabel)
         
         // 제목 레이블
-        val titleLabel = JLabel("소진공 AI 챗봇")
+        val titleLabel = JLabel("Protein 26")
         titleLabel.foreground = Color.WHITE
         titleLabel.font = Font("SansSerif", Font.BOLD, 16)
         titlePanel.add(titleLabel)
