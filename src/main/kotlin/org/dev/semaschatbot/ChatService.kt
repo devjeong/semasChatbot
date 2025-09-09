@@ -1,6 +1,7 @@
 package org.dev.semaschatbot
 
 import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerEx
+import com.intellij.psi.codeStyle.CodeStyleManager
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
@@ -21,6 +22,8 @@ import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiFile
+import com.intellij.psi.PsiManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
 import groovy.util.logging.Slf4j
@@ -397,6 +400,103 @@ class ChatService(private val project: Project) {
     }
 
     /**
+     * 적용된 코드 영역에 대해 포맷팅을 수행합니다.
+     * @param document 문서
+     * @param startOffset 시작 오프셋
+     * @param endOffset 끝 오프셋
+     */
+    private fun formatCodeRange(document: Document, startOffset: Int, endOffset: Int) {
+        try {
+            // PsiFile 가져오기
+            val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(document)
+            if (psiFile != null) {
+                // 파일 확장자에 따라 포맷팅 적용 여부 결정
+                val fileName = psiFile.name.lowercase()
+                val isJavaScriptFile = fileName.endsWith(".js") || 
+                                     fileName.endsWith(".jsx") || 
+                                     fileName.endsWith(".ts") || 
+                                     fileName.endsWith(".tsx") ||
+                                     fileName.endsWith(".vue")
+                val isJavaFile = fileName.endsWith(".java") || fileName.endsWith(".kt")
+                
+                if (isJavaScriptFile || isJavaFile) {
+                    ApplicationManager.getApplication().invokeLater {
+                        WriteCommandAction.runWriteCommandAction(project) {
+                            // IntelliJ의 내장 포맷터를 사용하여 특정 범위 포맷팅
+                            val codeStyleManager = CodeStyleManager.getInstance(project)
+                            codeStyleManager.reformatText(psiFile, startOffset, endOffset)
+                            
+                            // JavaScript/TypeScript 파일의 경우 ESLint 실행 시도
+                            if (isJavaScriptFile) {
+                                tryRunESLint(psiFile)
+                            } else {
+                                sendMessage("📐 코드 포맷팅이 적용되었습니다.", isUser = false)
+                            }
+                        }
+                    }
+                } else {
+                    sendMessage("💡 해당 파일 형식은 자동 포맷팅을 지원하지 않습니다.", isUser = false)
+                }
+            }
+        } catch (e: Exception) {
+            sendMessage("⚠️ 포맷팅 중 오류가 발생했습니다: ${e.message}", isUser = false)
+        }
+    }
+
+    /**
+     * ESLint를 실행하여 코드를 포맷팅합니다.
+     * @param psiFile 대상 파일
+     */
+    private fun tryRunESLint(psiFile: PsiFile) {
+        try {
+            val virtualFile = psiFile.virtualFile
+            if (virtualFile != null) {
+                val filePath = virtualFile.path
+                val projectPath = project.basePath
+                
+                // ESLint가 프로젝트에 설치되어 있는지 확인
+                val eslintPaths = listOf(
+                    "$projectPath/node_modules/.bin/eslint",
+                    "$projectPath/node_modules/.bin/eslint.cmd"
+                )
+                
+                val eslintPath = eslintPaths.find { File(it).exists() }
+                
+                if (eslintPath != null) {
+                    // ESLint 실행
+                    val processBuilder = ProcessBuilder(eslintPath, "--fix", filePath)
+                    processBuilder.directory(File(projectPath ?: "."))
+                    
+                    Thread {
+                        try {
+                            val process = processBuilder.start()
+                            val exitCode = process.waitFor()
+                            
+                            ApplicationManager.getApplication().invokeLater {
+                                if (exitCode == 0) {
+                                    // 파일 새로고침하여 ESLint 변경사항 반영
+                                    virtualFile.refresh(false, false)
+                                    sendMessage("📐 ESLint 포맷팅이 적용되었습니다.", isUser = false)
+                                } else {
+                                    sendMessage("📐 IntelliJ 포맷팅이 적용되었습니다. (ESLint 실행 실패)", isUser = false)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            ApplicationManager.getApplication().invokeLater {
+                                sendMessage("📐 IntelliJ 포맷팅이 적용되었습니다. (ESLint 실행 중 오류: ${e.message})", isUser = false)
+                            }
+                        }
+                    }.start()
+                } else {
+                    sendMessage("📐 IntelliJ 포맷팅이 적용되었습니다. (ESLint가 설치되지 않음)", isUser = false)
+                }
+            }
+        } catch (e: Exception) {
+            sendMessage("📐 IntelliJ 포맷팅이 적용되었습니다. (ESLint 확인 중 오류: ${e.message})", isUser = false)
+        }
+    }
+
+    /**
      * 설정된 커서 컨텍스트를 초기화합니다.
      */
     private fun clearCursorContext() {
@@ -741,11 +841,19 @@ class ChatService(private val project: Project) {
      * @return 적용 버튼이 포함된 패널
      */
     private fun createApplyButtonPanel(message: String): JPanel {
-        val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 3))
+        val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 3, 3))
         buttonPanel.background = Color(236, 240, 241)
         buttonPanel.preferredSize = Dimension(450, 28)  // 메시지 패널 전체 너비에 맞춤
         buttonPanel.maximumSize = Dimension(450, 28)
         buttonPanel.minimumSize = Dimension(100, 28)
+        
+        // 포맷팅 옵션 체크박스
+        val formatCheckBox = JCheckBox("포맷팅", true)
+        formatCheckBox.font = Font("SansSerif", Font.PLAIN, 9)
+        formatCheckBox.background = Color(236, 240, 241)
+        formatCheckBox.foreground = Color(44, 62, 80)
+        formatCheckBox.toolTipText = "코드 적용 후 자동 포맷팅 실행"
+        formatCheckBox.preferredSize = Dimension(55, 22)
         
         val applyButton = JButton("적용")
         applyButton.font = Font("SansSerif", Font.BOLD, 10)
@@ -757,12 +865,13 @@ class ChatService(private val project: Project) {
         )
         applyButton.isFocusPainted = false
         applyButton.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-        applyButton.preferredSize = Dimension(55, 22)
+        applyButton.preferredSize = Dimension(50, 22)
         
         applyButton.addActionListener {
-            applyCodeFromMessage(message)
+            applyCodeFromMessage(message, formatCheckBox.isSelected)
         }
         
+        buttonPanel.add(formatCheckBox)
         buttonPanel.add(applyButton)
         return buttonPanel
     }
@@ -770,8 +879,9 @@ class ChatService(private val project: Project) {
     /**
      * 메시지에서 코드 블록을 추출하고 원본 선택 영역과 교체합니다.
      * @param message 코드 블록이 포함된 메시지
+     * @param applyFormatting 포맷팅 적용 여부
      */
-    private fun applyCodeFromMessage(message: String) {
+    private fun applyCodeFromMessage(message: String, applyFormatting: Boolean = true) {
         // 저장된 선택 영역 정보가 있는지 확인
         if (selectedDocument == null || selectedStartOffset == null || selectedEndOffset == null) {
             sendMessage("❌ 원본 선택 영역 정보가 없습니다. 'Send Selection to Chat'으로 선택한 코드에만 적용할 수 있습니다.", isUser = false)
@@ -808,6 +918,12 @@ class ChatService(private val project: Project) {
                         }
                         
                         sendMessage("✅ 코드가 성공적으로 적용되었습니다.", isUser = false)
+                        
+                        // 포맷팅 옵션이 활성화된 경우 적용된 코드 영역에 포맷팅 적용
+                        if (applyFormatting) {
+                            val newEndOffset = startOffset + newCode.length
+                            formatCodeRange(document, startOffset, newEndOffset)
+                        }
                         
                         // 적용 완료 후 선택 컨텍스트 초기화
                         clearSelectionContext()
