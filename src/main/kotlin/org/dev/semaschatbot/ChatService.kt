@@ -41,17 +41,6 @@ import java.io.InputStream
 import java.io.File
 import javax.swing.*
 
-/**
- * 사용자 입력 타입을 나타내는 열거형입니다.
- */
-enum class UserInputType {
-    RAG_QUESTION,           // 코드베이스 기반 질문
-    INSTRUCTION,            // 코드 수정/개선 지시
-    CURSOR_CODE_GENERATION, // 커서 위치 코드 생성
-    FILE_CREATION,          // 새 파일 생성 요청
-    EXTERNAL_FILE_EDIT,     // 외부 파일 수정 요청
-    GENERAL_QUESTION        // 일반적인 질문
-}
 
 /**
  * 제안된 코드 변경 사항을 관리하는 데이터 클래스입니다.
@@ -940,35 +929,8 @@ class ChatService(private val project: Project) {
     /**
      * 사용자 입력 유형을 분류합니다. (질문, 부분수정, 전체수정, 커서위치생성, RAG질문, 일반)
      */
-    private enum class UserInputType { QUESTION, INSTRUCTION, FULL_FILE_INSTRUCTION, CURSOR_CODE_GENERATION, RAG_QUESTION, GENERAL, EXTERNAL_FILE_EDIT, FILE_CREATION }
-    /*private fun classifyInput(userInput: String): UserInputType {
-        val instructionKeywords = listOf("add", "change", "refactor", "implement", "create", "modify", "improve", "fix", "correct", "추가해", "바꿔줘", "수정해", "리팩토링", "개선해", "고쳐줘", "만들어줘","변경해", "작성해")
-        val fullFileKeywords = listOf("전체", "파일", "모든", "전부", "완전히", "처음부터", "새로", "전면", "전체적으로", "whole", "entire", "complete", "full", "all")
-        val questionKeywords = listOf("어떻게", "무엇", "언제", "어디서", "왜", "어떤", "설명", "알려줘", "찾아줘", "검색", "how", "what", "when", "where", "why", "which", "explain", "tell", "find", "search")
-        val lowerInput = userInput.trim().lowercase()
-        
-        // 커서 컨텍스트가 설정되어 있는 경우 커서 위치 코드 생성으로 분류
-        if (cursorLine != null) {
-            return UserInputType.CURSOR_CODE_GENERATION
-        }
-        
-        // 인덱싱된 코드가 있고 질문 키워드가 포함된 경우 RAG 질문으로 분류
-        if (codeIndexingService.getAllCodeChunks().isNotEmpty() && 
-            questionKeywords.any { lowerInput.contains(it) } &&
-            selectedCode == null) {  // 선택된 코드가 없는 경우만
-            return UserInputType.RAG_QUESTION
-        }
-        
-        if (instructionKeywords.any { lowerInput.contains(it) }) {
-            // 전체 파일 수정 키워드가 포함되어 있고, 선택된 코드가 전체 파일인 경우
-            if (fullFileKeywords.any { lowerInput.contains(it) } || isFullFileSelected()) {
-                return UserInputType.FULL_FILE_INSTRUCTION
-            }
-            return UserInputType.INSTRUCTION
-        }
-        return UserInputType.GENERAL
-    }*/
-    
+    private enum class UserInputType { INSTRUCTION, FULL_FILE_INSTRUCTION, CURSOR_CODE_GENERATION, RAG_QUESTION, GENERAL_QUESTION, EXTERNAL_FILE_EDIT, FILE_CREATION }
+
     /**
      * 선택된 코드가 전체 파일인지 확인합니다.
      */
@@ -1037,7 +999,28 @@ class ChatService(private val project: Project) {
                 """.trimIndent()
             }
             inputType == UserInputType.CURSOR_CODE_GENERATION -> {
-                // 커서 위치 기반 새로운 코드 생성
+                // 커서 위치 기반 새로운 코드 생성 - RAG 기반으로 관련 코드 참조
+                val relevantChunks = searchRelevantCode(userInput, 3)
+                val contextCode = if (relevantChunks.isNotEmpty()) {
+                    buildString {
+                        appendLine("다음은 새 코드 생성과 관련된 프로젝트 코드 참조:")
+                        appendLine()
+                        relevantChunks.forEachIndexed { index, chunk ->
+                            appendLine("=== 참조 코드 ${index + 1}: ${chunk.fileName} (${chunk.type.name}) ===")
+                            appendLine("위치: ${chunk.filePath}:${chunk.startLine}-${chunk.endLine}")
+                            appendLine("시그니처: ${chunk.signature}")
+                            appendLine()
+                            appendLine("```")
+                            appendLine(chunk.content.take(600)) // 커서 생성에는 더 간결하게
+                            if (chunk.content.length > 600) appendLine("... (코드가 길어서 일부만 표시)")
+                            appendLine("```")
+                            appendLine()
+                        }
+                    }
+                } else {
+                    "관련 코드를 찾을 수 없어 파일 컨텍스트만을 참조합니다."
+                }
+                
                 val lines = fullFileContent?.lines() ?: listOf()
                 val numberedContent = lines.mapIndexed { index, line -> 
                     "${index + 1}: $line" 
@@ -1046,7 +1029,9 @@ class ChatService(private val project: Project) {
                 """
                 You are an expert software developer specializing in Java, Kotlin, Vue.js, and Tibero DB.
                 Your task is to generate NEW code that should be inserted at the current cursor position.
-                This is NOT about modifying existing code, but creating NEW functionality.
+                This is NOT about modifying existing code, but creating NEW functionality based on related project patterns.
+
+                $contextCode
 
                 You MUST respond ONLY with the new code in this exact format:
 
@@ -1066,11 +1051,13 @@ class ChatService(private val project: Project) {
 
                 Important guidelines:
                 1. Generate NEW code that fits naturally at the cursor position
-                2. Maintain proper code structure and formatting
-                3. Consider the surrounding code context for proper integration
-                4. Follow best practices and coding conventions for ${cursorFileName}
+                2. Maintain proper code structure and formatting consistent with referenced patterns
+                3. Consider the surrounding code context and similar patterns from referenced code
+                4. Follow best practices and coding conventions seen in referenced code for ${cursorFileName}
                 5. Ensure the new code is syntactically correct and follows the project's style
                 6. If imports are needed, include them as part of the generated code
+                7. Use similar naming conventions and architectural patterns from the referenced code
+                8. Ensure the new code integrates well with existing project patterns
                 """.trimIndent()
             }
             inputType == UserInputType.FULL_FILE_INSTRUCTION && codeContext != null -> {
@@ -1121,11 +1108,34 @@ class ChatService(private val project: Project) {
                 """.trimIndent()
             }
             inputType == UserInputType.FILE_CREATION -> {
-                // 새 파일 생성 요청 처리
+                // 새 파일 생성 요청 처리 - RAG 기반으로 관련 코드 참조
+                val relevantChunks = searchRelevantCode(userInput, 5)
+                val contextCode = if (relevantChunks.isNotEmpty()) {
+                    buildString {
+                        appendLine("다음은 파일 생성과 관련된 프로젝트 코드 참조:")
+                        appendLine()
+                        relevantChunks.forEachIndexed { index, chunk ->
+                            appendLine("=== 참조 코드 ${index + 1}: ${chunk.fileName} (${chunk.type.name}) ===")
+                            appendLine("위치: ${chunk.filePath}:${chunk.startLine}-${chunk.endLine}")
+                            appendLine("시그니처: ${chunk.signature}")
+                            appendLine()
+                            appendLine("```")
+                            appendLine(chunk.content.take(800)) // 파일 생성에는 조금 더 간결하게
+                            if (chunk.content.length > 800) appendLine("... (코드가 길어서 일부만 표시)")
+                            appendLine("```")
+                            appendLine()
+                        }
+                    }
+                } else {
+                    "관련 코드를 찾을 수 없어 프로젝트 구조만을 참조합니다."
+                }
+                
                 val projectStructureInfo = buildProjectStructureInfo()
                 """
                 You are an expert software developer specializing in Java, Kotlin, Vue.js, and Tibero DB.
-                Your task is to create a new file based on the user's request and the current project structure.
+                Your task is to create a new file based on the user's request, current project structure, and related existing code.
+                
+                $contextCode
                 
                 $projectStructureInfo
                 
@@ -1143,21 +1153,45 @@ class ChatService(private val project: Project) {
                 User request: $userInput
 
                 Important guidelines:
-                1. Use the project structure information above to determine the most appropriate file location
-                2. Follow existing package naming conventions from the project structure
-                3. Choose the correct template type based on file extension and content
+                1. Use both the project structure information and related code references above
+                2. Follow existing package naming conventions and coding patterns from the referenced code
+                3. Choose the correct template type based on file extension and similar existing files
                 4. Create meaningful class/component names that fit the project's naming patterns
                 5. Follow language-specific best practices and conventions seen in existing code
-                6. Include necessary imports and dependencies consistent with project structure
-                7. Add proper documentation and comments
-                8. Ensure the new file integrates well with the existing codebase structure
+                6. Include necessary imports and dependencies consistent with project structure and related code
+                7. Add proper documentation and comments in a style similar to existing code
+                8. Ensure the new file integrates well with the existing codebase structure and patterns
+                9. Reference similar patterns from the provided code examples when applicable
                 """.trimIndent()
             }
             inputType == UserInputType.EXTERNAL_FILE_EDIT -> {
-                // 외부 파일 수정 요청 처리
+                // 외부 파일 수정 요청 처리 - RAG 기반으로 관련 코드 참조
+                val relevantChunks = searchRelevantCode(userInput, 5)
+                val contextCode = if (relevantChunks.isNotEmpty()) {
+                    buildString {
+                        appendLine("다음은 파일 수정과 관련된 프로젝트 코드 참조:")
+                        appendLine()
+                        relevantChunks.forEachIndexed { index, chunk ->
+                            appendLine("=== 참조 코드 ${index + 1}: ${chunk.fileName} (${chunk.type.name}) ===")
+                            appendLine("위치: ${chunk.filePath}:${chunk.startLine}-${chunk.endLine}")
+                            appendLine("시그니처: ${chunk.signature}")
+                            appendLine()
+                            appendLine("```")
+                            appendLine(chunk.content.take(800)) // 외부 파일 수정에는 간결하게
+                            if (chunk.content.length > 800) appendLine("... (코드가 길어서 일부만 표시)")
+                            appendLine("```")
+                            appendLine()
+                        }
+                    }
+                } else {
+                    "관련 코드를 찾을 수 없어 요청사항만을 기준으로 파일을 수정합니다."
+                }
+                
                 """
                 You are an expert software developer specializing in Java, Kotlin, Vue.js, and Tibero DB.
-                Your task is to modify an external file based on the user's request.
+                Your task is to modify an external file based on the user's request and related existing code patterns.
+
+                $contextCode
 
                 You MUST respond with the following format:
 
@@ -1174,9 +1208,11 @@ class ChatService(private val project: Project) {
                 2. If the file doesn't exist, set OPERATION to CREATE_NEW
                 3. If the file exists, set OPERATION to MODIFY_EXISTING
                 4. Provide complete file content with modifications
-                5. Maintain existing code structure and formatting
-                6. Follow language-specific best practices
-                7. Add proper error handling if applicable
+                5. Maintain existing code structure and formatting consistent with referenced code
+                6. Follow language-specific best practices seen in similar project files
+                7. Add proper error handling if applicable, following patterns from referenced code
+                8. Use similar coding patterns, naming conventions, and structure from the referenced code
+                9. Ensure consistency with the overall project architecture shown in the code references
                 """.trimIndent()
             }
             inputType == UserInputType.INSTRUCTION && codeContext != null -> {
@@ -1198,17 +1234,63 @@ class ChatService(private val project: Project) {
                 """.trimIndent()
             }
             else -> {
-                // 그 외의 경우, 일반적인 프롬프트 사용
-                val basePrompt = if (codeContext != null) {
-                    "User selected code from $fileContext: \n```\n$codeContext\n```\n\nUser query: $userInput"
+                // 그 외의 경우, 일반적인 프롬프트 사용 - RAG 기반으로 관련 코드 참조
+                val relevantChunks = searchRelevantCode(userInput, 4)
+                val contextCode = if (relevantChunks.isNotEmpty()) {
+                    buildString {
+                        appendLine("다음은 질문과 관련된 프로젝트 코드 참조:")
+                        appendLine()
+                        relevantChunks.forEachIndexed { index, chunk ->
+                            appendLine("=== 참조 코드 ${index + 1}: ${chunk.fileName} (${chunk.type.name}) ===")
+                            appendLine("위치: ${chunk.filePath}:${chunk.startLine}-${chunk.endLine}")
+                            appendLine("시그니처: ${chunk.signature}")
+                            appendLine()
+                            appendLine("```")
+                            appendLine(chunk.content.take(700)) // 일반 질문에는 적당한 길이로
+                            if (chunk.content.length > 700) appendLine("... (코드가 길어서 일부만 표시)")
+                            appendLine("```")
+                            appendLine()
+                        }
+                    }
                 } else {
-                    userInput
+                    if (codeContext != null) {
+                        "선택된 코드 컨텍스트를 기반으로 답변합니다."
+                    } else {
+                        "관련된 프로젝트 코드를 찾을 수 없어 일반적인 지식을 기반으로 답변합니다."
+                    }
+                }
+                
+                val basePrompt = if (codeContext != null) {
+                    """
+                    $contextCode
+                    
+                    User selected code from $fileContext: 
+                    ```
+                    $codeContext
+                    ```
+                    
+                    User query: $userInput
+                    """
+                } else {
+                    """
+                    $contextCode
+                    
+                    User query: $userInput
+                    """
                 }
                 
                 """
                 You are an expert software developer and code analyst specializing in Java, Kotlin, Vue.js, and Tibero DB.
+                Your task is to answer the user's question based on the provided project code context and general programming knowledge.
                 
                 $basePrompt
+                
+                Important guidelines:
+                1. Reference the provided code context when relevant to the question
+                2. Provide practical advice consistent with the project's patterns and architecture
+                3. Use similar coding styles and conventions seen in the referenced code
+                4. If no relevant code is found, provide general best practices for the technologies used
+                5. Always prioritize solutions that fit well with the existing codebase
                 
                 You MUST start your response with "[${inputType.name}] " followed by your answer.
                 Always respond in Korean.
@@ -1981,14 +2063,14 @@ class ChatService(private val project: Project) {
         if (hasFilePathQuestion && !hasActionVerb) {
             return UserInputType.RAG_QUESTION
         }
-        
+        /**
         // 새 파일 생성 요청 감지
         val fileCreationKeywords = listOf(
             "파일 생성", "파일 만들어", "새 파일", "파일 작성", "파일 만들",
             "만들어줘", "만들어달라", "생성해줘", "작성해줘",
             "create file", "new file", "generate file", "make file"
         )
-        
+
         val fileCreationPatterns = listOf(
             ".*\\.java.*생성", ".*\\.kt.*생성", ".*\\.vue.*생성", ".*\\.xml.*생성", ".*\\.json.*생성",
             ".*\\.java.*만들", ".*\\.kt.*만들", ".*\\.vue.*만들", ".*\\.xml.*만들", ".*\\.json.*만들",
@@ -1998,56 +2080,56 @@ class ChatService(private val project: Project) {
             ".*작성.*\\.java", ".*작성.*\\.kt", ".*작성.*\\.vue", ".*작성.*\\.xml", ".*작성.*\\.json",
             ".*(java|kt|vue|xml|json)\\s+파일.*만들", ".*(java|kt|vue|xml|json)\\s+파일.*생성", ".*(java|kt|vue|xml|json)\\s+파일.*작성"
         )
-        
+
         val hasFileCreationKeyword = fileCreationKeywords.any { keyword ->
             input.contains(keyword)
         }
-        
+
         val hasFileCreationPattern = fileCreationPatterns.any { pattern ->
             Regex(pattern).containsMatchIn(input)
         }
-        
+
         // 파일 생성 관련 동사가 명시적으로 포함된 경우만 파일 생성으로 분류
         val hasCreationVerb = listOf("생성", "만들", "작성", "create", "make", "generate", "write").any { verb ->
             input.contains(verb)
         }
-        
+
         // 파일 확장자와 생성 동사가 함께 있는 경우도 파일 생성으로 분류
         val hasFileExtensionWithCreation = Regex(".*\\.(java|kt|vue|xml|json).*").containsMatchIn(input) && hasCreationVerb
-        
+
         if (hasFileCreationKeyword || hasFileCreationPattern || hasFileExtensionWithCreation) {
             return UserInputType.FILE_CREATION
         }
-        
+
         // 외부 파일 수정 요청 감지 (수정 동사가 명시적으로 포함된 경우만)
         val externalFileKeywords = listOf(
             "파일 수정", "파일 변경", "파일 편집",
             "modify file", "edit file", "change file", "update file"
         )
-        
+
         val pathPatterns = listOf(
             ".*[/\\\\].*\\.(java|kt|vue|xml|json).*", // 경로가 포함된 파일명
-            ".*/.*", // Unix 스타일 경로
+            ".*ㄱ/.*", // Unix 스타일 경로(주석 풀 때 ㄱ 제거 필요)
             ".*\\\\.*" // Windows 스타일 경로
         )
-        
+
         val hasExternalFileKeyword = externalFileKeywords.any { keyword ->
             input.contains(keyword)
         }
-        
+
         val hasPathPattern = pathPatterns.any { pattern ->
             Regex(pattern).containsMatchIn(input)
         }
-        
+
         // 수정 관련 동사가 명시적으로 포함된 경우만 외부 파일 수정으로 분류
         val hasModificationVerb = listOf("수정", "변경", "편집", "modify", "edit", "change", "update", "fix").any { verb ->
             input.contains(verb)
         }
-        
+
         if ((hasExternalFileKeyword || (hasPathPattern && hasModificationVerb)) && selectedCode == null) {
             return UserInputType.EXTERNAL_FILE_EDIT
         }
-        
+
         // 커서 위치 기반 코드 생성 요청 감지
         if (cursorLine != null && (
             input.contains("생성") || input.contains("만들어") || input.contains("작성") || 
@@ -2065,7 +2147,8 @@ class ChatService(private val project: Project) {
         )) {
             return UserInputType.INSTRUCTION
         }
-        
+        **/
+
         // 코드베이스 관련 질문 키워드 감지
         val codebaseQuestionKeywords = listOf(
             "어떻게", "어디서", "무엇", "언제", "왜",
@@ -2097,7 +2180,7 @@ class ChatService(private val project: Project) {
         }
         
         // 기본값은 일반 질문
-        return UserInputType.GENERAL
+        return UserInputType.GENERAL_QUESTION
     }
     
     /**
