@@ -181,7 +181,10 @@ data class PendingExternalFileEdit(
 class ChatService(private val project: Project) {
 
     private val apiClient = LmStudioClient()
-    private val codeIndexingService = CodeIndexingService(project)
+    // 실시간 인덱싱 서비스의 CodeIndexingService 인스턴스 사용
+    private val realTimeIndexingService = project.getService(RealTimeIndexingService::class.java)
+    private val codeIndexingService: CodeIndexingService
+        get() = realTimeIndexingService.getIndexingService()
     var systemMessage: String = """
         당신은 Java 전문 개발 어시스턴트입니다. IntelliJ IDEA 환경에서 작업하는 개발자를 지원합니다.
 
@@ -452,11 +455,11 @@ class ChatService(private val project: Project) {
 
     /**
      * 인증 성공 시 자동으로 실행되는 프로젝트 인덱싱입니다.
-     * 진행 상황을 상세히 보고합니다.
+     * 실시간 인덱싱 서비스를 시작하고 진행 상황을 상세히 보고합니다.
      */
     private fun startAutoIndexing() {
-        object : SwingWorker<Int, String>() {
-            override fun doInBackground(): Int {
+        object : SwingWorker<Boolean, String>() {
+            override fun doInBackground(): Boolean {
                 publish("🔍 프로젝트 파일을 스캔하고 있습니다...")
                 Thread.sleep(500) // UI 업데이트를 위한 짧은 지연
                 
@@ -466,12 +469,21 @@ class ChatService(private val project: Project) {
                 publish("⚙️ PSI 트리를 분석하여 코드 구조를 파악합니다...")
                 Thread.sleep(500)
                 
-                val chunkCount = codeIndexingService.indexProject()
+                // 실시간 인덱싱 서비스 시작 (이미 시작되어 있다면 스킵)
+                if (!realTimeIndexingService.isActive()) {
+                    realTimeIndexingService.startRealTimeIndexing()
+                }
+                
+                // 초기 인덱싱이 완료될 때까지 잠시 대기
+                Thread.sleep(2000)
                 
                 publish("🔧 인덱싱 통계를 생성하고 있습니다...")
                 Thread.sleep(300)
                 
-                return chunkCount
+                publish("🔄 실시간 인덱싱이 활성화되었습니다. 파일 변경사항이 자동으로 반영됩니다!")
+                Thread.sleep(300)
+                
+                return true
             }
             
             override fun process(chunks: List<String>) {
@@ -483,7 +495,7 @@ class ChatService(private val project: Project) {
             
             override fun done() {
                 try {
-                    val chunkCount = get()
+                    get() // 결과 확인
                     val stats = codeIndexingService.getIndexingStats()
                     
                     val completionMessage = buildString {
@@ -498,6 +510,8 @@ class ChatService(private val project: Project) {
                         appendLine("")
                         appendLine("💡 이제 프로젝트 코드베이스를 기반으로 한 질문에 정확하게 답변할 수 있습니다!")
                         appendLine("🚀 프로젝트에 관한 궁금한 점을 언제든 물어보세요!")
+                        appendLine("")
+                        appendLine("⚡ 실시간 모드: 파일을 수정하면 자동으로 최신 코드가 반영됩니다!")
                     }
                     
                     sendMessage(completionMessage, isUser = false)

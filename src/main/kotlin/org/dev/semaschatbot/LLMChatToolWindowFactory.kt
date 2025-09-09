@@ -18,6 +18,8 @@ import javax.swing.JPanel
 import javax.swing.JTextField
 import javax.swing.JLabel
 import javax.swing.JTextArea
+import javax.swing.ImageIcon
+import com.intellij.openapi.util.IconLoader
 import javax.swing.JScrollPane
 import javax.swing.JOptionPane
 import javax.swing.JPasswordField
@@ -376,7 +378,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             if (chatService.requiresAuthentication()) {
                 showAuthenticationDialog(chatService, panel)
             } else {
-                chatService.sendMessage("안녕하세요! 소진공 AI 챗봇입니다. 무엇을 도와드릴까요?", isUser = false)
+                chatService.sendMessage("안녕하세요! Protein 26 입니다. 무엇을 도와드릴까요?", isUser = false)
             }
         }
     }
@@ -440,9 +442,30 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val titlePanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
         titlePanel.background = Color(173, 216, 230)
         
-        // 아이콘 레이블
-        val iconLabel = JLabel("🤖")
-        iconLabel.font = Font("SansSerif", Font.PLAIN, 20)
+        // 아이콘 레이블 - IntelliJ IconLoader 사용
+        val iconLabel = try {
+            // 먼저 protein_Logo_resize.svg를 시도
+            val icon = IconLoader.findIcon("/META-INF/protein_Logo_resize.svg", javaClass)
+            if (icon != null) {
+                JLabel(icon)
+            } else {
+                // 대체 아이콘으로 pluginIcon.svg 시도
+                val fallbackIcon = IconLoader.findIcon("/META-INF/pluginIcon.svg", javaClass)
+                if (fallbackIcon != null) {
+                    JLabel(fallbackIcon)
+                } else {
+                    // 모든 아이콘 로드 실패 시 텍스트 사용
+                    val textLabel = JLabel("🤖")
+                    textLabel.font = Font("SansSerif", Font.PLAIN, 20)
+                    textLabel
+                }
+            }
+        } catch (e: Exception) {
+            println("아이콘 로드 실패: ${e.message}")
+            val textLabel = JLabel("🤖")
+            textLabel.font = Font("SansSerif", Font.PLAIN, 20)
+            textLabel
+        }
         titlePanel.add(iconLabel)
         
         // 제목 레이블

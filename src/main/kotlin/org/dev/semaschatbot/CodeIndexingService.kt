@@ -526,4 +526,28 @@ class CodeIndexingService(private val project: Project) {
         
         return stats
     }
+    
+    /**
+     * 코드 조각을 인덱스에 추가합니다.
+     */
+    fun addCodeChunk(chunk: CodeChunk) {
+        codeChunks[chunk.id] = chunk
+    }
+    
+    /**
+     * 특정 파일의 모든 코드 조각을 인덱스에서 제거합니다.
+     */
+    fun removeFileFromIndex(filePath: String) {
+        val chunksToRemove = codeChunks.values.filter { it.filePath == filePath }
+        chunksToRemove.forEach { chunk ->
+            codeChunks.remove(chunk.id)
+        }
+    }
+    
+    /**
+     * 특정 파일을 인덱싱합니다. (public 메서드)
+     */
+    fun indexFilePublic(file: VirtualFile): List<CodeChunk> {
+        return indexFile(file)
+    }
 } 

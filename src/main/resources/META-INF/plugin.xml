@@ -36,9 +36,19 @@
     <!-- Extension points defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="Protein26" anchor="right" factoryClass="org.dev.semaschatbot.LLMChatToolWindowFactory" icon="/META-INF/pluginIcon.svg"/>
+        <toolWindow id="Protein26" anchor="right" factoryClass="org.dev.semaschatbot.LLMChatToolWindowFactory" icon="/META-INF/protein_Logo_resize.svg"/>
         <notificationGroup id="LLMNoti" displayType="BALLOON"/>
         <codeInsight.lineMarkerProvider language="" implementationClass="org.dev.semaschatbot.CodeActionLineMarkerProvider"/>
+        
+        <!-- 실시간 인덱싱 서비스 -->
+        <projectService serviceImplementation="org.dev.semaschatbot.RealTimeIndexingService"/>
+        <projectService serviceImplementation="org.dev.semaschatbot.FileHashService"/>
+        
+        <!-- 자동 시작 활동 -->
+        <postStartupActivity implementation="org.dev.semaschatbot.RealTimeIndexingStartupActivity"/>
+        
+        <!-- 프로젝트 생명주기 리스너 -->
+        <projectManagerListener implementation="org.dev.semaschatbot.RealTimeIndexingProjectListener"/>
     </extensions>
 
     <resource-bundle>META-INF.MessagesBundle</resource-bundle>
@@ -57,6 +67,28 @@
                 description="Generates new code at the current cursor position using AI.">
             <keyboard-shortcut keymap="$default" first-keystroke="shift ctrl N"/>
             <add-to-group group-id="EditorPopupMenu" anchor="after" relative-to-action="org.dev.semaschatbot.SendSelectionToChat"/>
+        </action>
+        
+        <!-- 실시간 인덱싱 제어 액션들 -->
+        <action id="org.dev.semaschatbot.ForceReindexing"
+                class="org.dev.semaschatbot.ForceReindexingAction"
+                text="Force Reindexing"
+                description="Forces complete reindexing of the project codebase.">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        
+        <action id="org.dev.semaschatbot.IndexingStats"
+                class="org.dev.semaschatbot.IndexingStatsAction"
+                text="Show Indexing Statistics"
+                description="Shows detailed statistics about the indexing process.">
+            <add-to-group group-id="ToolsMenu" anchor="after" relative-to-action="org.dev.semaschatbot.ForceReindexing"/>
+        </action>
+        
+        <action id="org.dev.semaschatbot.ToggleRealTimeIndexing"
+                class="org.dev.semaschatbot.ToggleRealTimeIndexingAction"
+                text="Toggle Real-time Indexing"
+                description="Enables or disables real-time indexing of code changes.">
+            <add-to-group group-id="ToolsMenu" anchor="after" relative-to-action="org.dev.semaschatbot.IndexingStats"/>
         </action>
     </actions>
 </idea-plugin>
