@@ -346,8 +346,9 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                 scroll.verticalScrollBar.value = 0
             }
             
-            // 인증 상태도 초기화
+            // 인증 상태 및 선택 컨텍스트도 초기화
             chatService.resetAuthentication()
+            chatService.resetSelectionContext()
             
             ApplicationManager.getApplication().invokeLater {
                 chatService.sendMessage("대화가 초기화되었습니다.", isUser = false) // 챗봇에 초기화 메시지를 표시합니다.

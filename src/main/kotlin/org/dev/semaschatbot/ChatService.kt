@@ -26,13 +26,6 @@ import com.intellij.ui.components.JBScrollPane
 import groovy.util.logging.Slf4j
 import java.awt.Color
 import java.util.regex.Pattern
-import javax.swing.JLabel
-import javax.swing.JScrollPane
-import javax.swing.JTextArea
-import javax.swing.SwingWorker
-import javax.swing.JPanel
-import javax.swing.BoxLayout
-import javax.swing.Box
 import javax.swing.border.EmptyBorder
 import javax.swing.border.CompoundBorder
 import javax.swing.border.LineBorder
@@ -43,6 +36,7 @@ import java.awt.Dimension
 import java.util.Properties
 import java.io.InputStream
 import java.io.File
+import javax.swing.*
 
 /**
  * 사용자 입력 타입을 나타내는 열거형입니다.
@@ -211,6 +205,9 @@ class ChatService(private val project: Project) {
 
     private var selectedCode: String? = null
     private var selectedFileInfo: String? = null
+    private var selectedStartOffset: Int? = null
+    private var selectedEndOffset: Int? = null
+    private var selectedDocument: Document? = null
 
     // 커서 위치 기반 코드 생성을 위한 컨텍스트 변수들
     private var cursorLine: Int? = null
@@ -329,6 +326,18 @@ class ChatService(private val project: Project) {
     fun setSelectionContext(code: String, fileInfo: String) {
         selectedCode = code
         selectedFileInfo = fileInfo
+        
+        // 현재 선택 영역의 오프셋 정보도 저장
+        val editor = FileEditorManager.getInstance(project).selectedTextEditor
+        if (editor != null) {
+            val selectionModel = editor.selectionModel
+            if (selectionModel.hasSelection()) {
+                selectedStartOffset = selectionModel.selectionStart
+                selectedEndOffset = selectionModel.selectionEnd
+                selectedDocument = editor.document
+            }
+        }
+        
         ApplicationManager.getApplication().invokeLater {
             fileInfoLabel?.text = "선택된 파일: $fileInfo"
             fileInfoLabel?.isVisible = true
@@ -372,9 +381,19 @@ class ChatService(private val project: Project) {
     private fun clearSelectionContext() {
         selectedCode = null
         selectedFileInfo = null
+        selectedStartOffset = null
+        selectedEndOffset = null
+        selectedDocument = null
         ApplicationManager.getApplication().invokeLater {
             fileInfoLabel?.isVisible = false
         }
+    }
+
+    /**
+     * 선택 컨텍스트를 초기화합니다. (외부에서 호출 가능)
+     */
+    fun resetSelectionContext() {
+        clearSelectionContext()
     }
 
     /**
@@ -609,11 +628,20 @@ class ChatService(private val project: Project) {
         
         messagePanel.add(messageText, BorderLayout.CENTER)
         
+        // AI 메시지이고 코드 블록이 포함된 경우 적용 버튼 추가
+        var hasApplyButton = false
+        if (!isUser && hasCodeBlock(message)) {
+            val buttonPanel = createApplyButtonPanel(message)
+            messagePanel.add(buttonPanel, BorderLayout.NORTH)
+            hasApplyButton = true
+        }
+        
         // 텍스트 내용에 따른 동적 크기 계산
         val textMetrics = messageText.getFontMetrics(messageText.font)
         val maxWidth = 450  // 최대 너비 확대
         val minWidth = 100
         val maxHeight = 400  // 메시지 패널 최대 높이 제한
+        val buttonHeight = if (hasApplyButton) 28 else 0  // 버튼 높이 추가
         
         // 실제 JTextArea의 래핑을 시뮬레이션하여 정확한 줄 수 계산
         val explicitLines = message.split('\n')
@@ -653,12 +681,12 @@ class ChatService(private val project: Project) {
         }
         
         val lineHeight = textMetrics.height
-        val totalHeight = totalLines * lineHeight + 20
+        val totalHeight = totalLines * lineHeight + 20 + buttonHeight  // 버튼 높이 포함
         val actualWidth = (maxLineWidth + 30).coerceIn(minWidth, maxWidth)
-        val actualHeight = totalHeight.coerceAtMost(maxHeight)  // 최대 높이 제한
+        val actualHeight = totalHeight.coerceAtMost(maxHeight + buttonHeight)  // 최대 높이 제한에도 버튼 높이 포함
         
         // 긴 메시지의 경우 스크롤 가능하도록 JScrollPane 사용
-        if (totalHeight > maxHeight) {
+        if (totalLines * lineHeight + 20 > maxHeight) {  // 텍스트만의 높이로 판단
             val scrollPane = JBScrollPane(messageText)
             scrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
             scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
@@ -666,12 +694,20 @@ class ChatService(private val project: Project) {
             scrollPane.isOpaque = false
             scrollPane.viewport.isOpaque = false
             
-            messagePanel.removeAll()
+            // 기존 텍스트만 제거하고 스크롤 패널로 교체
+            messagePanel.remove(messageText)
             messagePanel.add(scrollPane, BorderLayout.CENTER)
             
-            // 스크롤 패널 크기 설정
-            scrollPane.preferredSize = Dimension(actualWidth - 20, maxHeight - 20)
-            scrollPane.maximumSize = Dimension(actualWidth - 20, maxHeight - 20)
+            // 버튼이 있는 경우 다시 추가
+            if (hasApplyButton) {
+                val buttonPanel = createApplyButtonPanel(message)
+                messagePanel.add(buttonPanel, BorderLayout.NORTH)
+            }
+            
+            // 스크롤 패널 크기 설정 (버튼 높이 제외)
+            val scrollHeight = maxHeight - buttonHeight - 20
+            scrollPane.preferredSize = Dimension(actualWidth - 20, scrollHeight)
+            scrollPane.maximumSize = Dimension(actualWidth - 20, scrollHeight)
         }
         
         // 패널 크기 조정 - 내용에 맞게 동적으로 설정하되 최대 높이 제한
@@ -687,6 +723,102 @@ class ChatService(private val project: Project) {
         containerPanel.add(messageWrapper, BorderLayout.CENTER)
         
         return containerPanel
+    }
+
+    /**
+     * 메시지에 코드 블록이 포함되어 있는지 확인합니다.
+     * @param message 확인할 메시지
+     * @return 코드 블록이 포함되어 있으면 true
+     */
+    private fun hasCodeBlock(message: String): Boolean {
+        val codeBlockPattern = Pattern.compile("```[a-zA-Z]*\\s*[\\s\\S]*?```", Pattern.MULTILINE)
+        return codeBlockPattern.matcher(message).find()
+    }
+
+    /**
+     * 적용 버튼 패널을 생성합니다.
+     * @param message 코드 블록이 포함된 메시지
+     * @return 적용 버튼이 포함된 패널
+     */
+    private fun createApplyButtonPanel(message: String): JPanel {
+        val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 3))
+        buttonPanel.background = Color(236, 240, 241)
+        buttonPanel.preferredSize = Dimension(450, 28)  // 메시지 패널 전체 너비에 맞춤
+        buttonPanel.maximumSize = Dimension(450, 28)
+        buttonPanel.minimumSize = Dimension(100, 28)
+        
+        val applyButton = JButton("적용")
+        applyButton.font = Font("SansSerif", Font.BOLD, 10)
+        applyButton.foreground = Color.WHITE
+        applyButton.background = Color(52, 152, 219)
+        applyButton.border = CompoundBorder(
+            LineBorder(Color(41, 128, 185), 1, true),
+            EmptyBorder(3, 8, 3, 8)
+        )
+        applyButton.isFocusPainted = false
+        applyButton.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        applyButton.preferredSize = Dimension(55, 22)
+        
+        applyButton.addActionListener {
+            applyCodeFromMessage(message)
+        }
+        
+        buttonPanel.add(applyButton)
+        return buttonPanel
+    }
+
+    /**
+     * 메시지에서 코드 블록을 추출하고 원본 선택 영역과 교체합니다.
+     * @param message 코드 블록이 포함된 메시지
+     */
+    private fun applyCodeFromMessage(message: String) {
+        // 저장된 선택 영역 정보가 있는지 확인
+        if (selectedDocument == null || selectedStartOffset == null || selectedEndOffset == null) {
+            sendMessage("❌ 원본 선택 영역 정보가 없습니다. 'Send Selection to Chat'으로 선택한 코드에만 적용할 수 있습니다.", isUser = false)
+            return
+        }
+
+        // 메시지에서 첫 번째 코드 블록 추출
+        val codeBlockPattern = Pattern.compile("```[a-zA-Z]*\\s*([\\s\\S]*?)```", Pattern.MULTILINE)
+        val matcher = codeBlockPattern.matcher(message)
+        
+        if (matcher.find()) {
+            val newCode = matcher.group(1).trim()
+            val document = selectedDocument!!
+            val startOffset = selectedStartOffset!!
+            val endOffset = selectedEndOffset!!
+            
+            ApplicationManager.getApplication().runWriteAction {
+                WriteCommandAction.runWriteCommandAction(project) {
+                    // 문서가 여전히 유효한지 확인
+                    if (startOffset <= document.textLength && endOffset <= document.textLength) {
+                        document.replaceString(startOffset, endOffset, newCode)
+                        
+                        // 에디터가 있다면 새로 삽입된 코드 영역을 선택
+                        val editor = FileEditorManager.getInstance(project).selectedTextEditor
+                        if (editor != null && editor.document == document) {
+                            val newEndOffset = startOffset + newCode.length
+                            editor.selectionModel.setSelection(startOffset, newEndOffset)
+                            editor.contentComponent.requestFocus()
+                        }
+                        
+                        // 코드 분석 재시작
+                        ApplicationManager.getApplication().invokeLater {
+                            DaemonCodeAnalyzerEx.getInstanceEx(project).restart()
+                        }
+                        
+                        sendMessage("✅ 코드가 성공적으로 적용되었습니다.", isUser = false)
+                        
+                        // 적용 완료 후 선택 컨텍스트 초기화
+                        clearSelectionContext()
+                    } else {
+                        sendMessage("❌ 문서가 변경되어 적용할 수 없습니다. 다시 코드를 선택해주세요.", isUser = false)
+                    }
+                }
+            }
+        } else {
+            sendMessage("❌ 메시지에서 유효한 코드 블록을 찾을 수 없습니다.", isUser = false)
+        }
     }
 
     /**
@@ -1009,7 +1141,7 @@ class ChatService(private val project: Project) {
             onComplete = {
                 ApplicationManager.getApplication().invokeLater {
                     loadingIndicator?.isVisible = false
-                    clearSelectionContext()
+                    // 선택 컨텍스트는 유지하여 적용 버튼에서 사용할 수 있도록 함
                     clearCursorContext()
                 }
             },
@@ -1017,7 +1149,7 @@ class ChatService(private val project: Project) {
                 ApplicationManager.getApplication().invokeLater {
                     loadingIndicator?.isVisible = false
                     sendMessage("오류가 발생했습니다: ${e.message}", isUser = false)
-                    clearSelectionContext()
+                    // 선택 컨텍스트는 유지하여 적용 버튼에서 사용할 수 있도록 함
                     clearCursorContext()
                 }
             }
