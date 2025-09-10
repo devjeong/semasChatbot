@@ -2032,6 +2032,16 @@ class ChatService(private val project: Project) {
     private fun classifyInput(userInput: String): UserInputType {
         val input = userInput.lowercase().trim()
         
+        // 1) LLM 기반 사전 분류 시도 (NEW_SOURCE / RAG_QUESTION / GENERAL_QUESTION)
+        try {
+            val llmType = classifyWithLLM(userInput)
+            if (llmType != null) {
+                return llmType
+            }
+        } catch (_: Exception) {
+            // 네트워크 오류나 파싱 오류 시 무시하고 휴리스틱으로 폴백
+        }
+        
         // 파일 경로/위치 질문 먼저 감지 (우선순위 높음)
         // 단, 파일 생성/수정 동사가 함께 있으면 질문이 아닌 작업 요청으로 분류
         val filePathQuestionKeywords = listOf(
@@ -2181,6 +2191,55 @@ class ChatService(private val project: Project) {
         
         // 기본값은 일반 질문
         return UserInputType.GENERAL_QUESTION
+    }
+
+    // LLM 기반 입력 분류 헬퍼: LLM이 정확히 하나의 토큰을 반환하도록 강제
+    // 반환: FILE_CREATION / CURSOR_CODE_GENERATION / RAG_QUESTION / GENERAL_QUESTION 중 하나, 실패 시 null
+    private fun classifyWithLLM(userInput: String): UserInputType? {
+        val systemPrompt = """
+            당신은 입력의 의도를 분류하는 분류기입니다.
+            아래 세 가지 중 하나만 출력하세요. 다른 말은 절대 하지 마세요.
+            NEW_SOURCE  |  RAG_QUESTION  |  GENERAL_QUESTION
+
+            분류 기준:
+            - NEW_SOURCE: 새 파일/클래스/함수/컴포넌트 생성이나 새로운 기능 추가 요청
+            - RAG_QUESTION: 현재 프로젝트 코드/파일/함수/경로/구현에 대해 묻는 질문
+            - GENERAL_QUESTION: 프로젝트 특정 코드 맥락 없이 일반 지식/조언/설명
+
+            출력 형식: 위 토큰 중 정확히 하나만. 공백/마크다운/설명 불가.
+        """.trimIndent()
+
+        val response = apiClient.sendChatRequest(userInput, systemPrompt) ?: return null
+        val token = response.trim().uppercase()
+        return when (token) {
+            "RAG_QUESTION" -> UserInputType.RAG_QUESTION
+            "GENERAL_QUESTION" -> UserInputType.GENERAL_QUESTION
+            "NEW_SOURCE" -> mapNewSourceToConcreteType(userInput)
+            else -> null
+        }
+    }
+
+    // NEW_SOURCE를 실제 처리 타입으로 구체화
+    private fun mapNewSourceToConcreteType(userInput: String): UserInputType {
+        val s = userInput.lowercase()
+
+        val creationVerbs = listOf(
+            "생성", "만들", "작성", "추가", "implement", "create", "generate", "add", "scaffold",
+            "보일러", "boilerplate", "template", "템플릿", "from scratch"
+        )
+        val mentionsCreation = creationVerbs.any { s.contains(it) }
+
+        val cursorHints = listOf("여기에", "현재 위치", "커서 위치", "이 줄", "cursor", "at the cursor")
+        val mentionsCursor = cursorHints.any { s.contains(it) } || (cursorLine != null && mentionsCreation)
+
+        val fileExtPattern = Regex("\\b[\\w-]+\\.(kt|java|xml|json|yml|yaml|vue|tsx|ts|js)\\b")
+        val mentionsExplicitFile = fileExtPattern.containsMatchIn(s) || (s.contains("파일") && mentionsCreation)
+
+        return when {
+            mentionsCursor -> UserInputType.CURSOR_CODE_GENERATION
+            mentionsExplicitFile -> UserInputType.FILE_CREATION
+            else -> if (cursorLine != null) UserInputType.CURSOR_CODE_GENERATION else UserInputType.FILE_CREATION
+        }
     }
     
     /**
