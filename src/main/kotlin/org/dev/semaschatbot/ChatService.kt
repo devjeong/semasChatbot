@@ -41,6 +41,16 @@ import java.io.InputStream
 import java.io.File
 import javax.swing.*
 
+import java.sql.Connection
+import java.sql.DriverManager
+import java.sql.ResultSet
+
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withContext
 
 /**
  * 제안된 코드 변경 사항을 관리하는 데이터 클래스입니다.
@@ -226,6 +236,9 @@ class ChatService(private val project: Project) {
     // 인증 관련 변수들
     private var isAuthenticated: Boolean = false
     private var configProperties: Properties? = null
+
+    // DB 스키마 정보
+    private var dbSchema: String? = null
 
     /**
      * LmStudio 서버의 URL을 설정합니다.
@@ -3693,5 +3706,76 @@ button:hover {
      */
     private fun rejectExternalFileEdit() {
         pendingExternalFileEdit = null
+    }
+
+    /**
+     * DB에 연결하여 스키마 정보를 수집하고 systemMessage에 추가합니다.
+     * @param dbType DB 종류 (PostgreSQL, MySQL)
+     * @param host 호스트
+     * @param port 포트
+     * @param dbName 데이터베이스 이름
+     * @param user 사용자
+     * @param password 비밀번호
+     */
+    fun connectToDB(dbType: String, host: String, port: String, dbName: String, user: String, password: String) {
+        sendMessage("🕒 DB 스키마 학습 중... 잠시만 기다려주세요.", isUser = false)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            val url = when (dbType) {
+                "Tibero" -> "jdbc:tibero:thin:@$host:$port:$dbName"
+                else -> {
+                    withContext(Dispatchers.Main) {
+                        sendMessage("지원되지 않는 DB 종류: $dbType", isUser = false)
+                    }
+                    return@launch
+                }
+            }
+
+            try {
+                Class.forName("com.tmax.tibero.jdbc.TbDriver")
+                DriverManager.getConnection(url, user, password).use { conn ->
+                    val meta = conn.metaData
+
+                    val schema = StringBuilder()
+                    val schemaPattern = "SEMAS24"
+                    val tablesRs: ResultSet = meta.getTables(null, schemaPattern, "%", arrayOf("TABLE"))
+
+                    val tableNames = mutableListOf<String>()
+                    while (tablesRs.next()) {
+                        tableNames.add(tablesRs.getString("TABLE_NAME"))
+                    }
+                    tablesRs.close()
+
+                    // Parallel column collection
+                    val columnJobs = tableNames.map { tableName ->
+                        async {
+                            val columnsRs: ResultSet = meta.getColumns(null, schemaPattern, tableName, "%")
+                            val tableSchema = StringBuilder("Table: $tableName\n")
+                            while (columnsRs.next()) {
+                                val colName = columnsRs.getString("COLUMN_NAME")
+                                val colType = columnsRs.getString("TYPE_NAME")
+                                tableSchema.append("  - $colName ($colType)\n")
+                            }
+                            columnsRs.close()
+                            tableSchema.toString()
+                        }
+                    }
+
+                    val columnResults = columnJobs.awaitAll()
+                    columnResults.forEach { schema.append(it) }
+
+                    dbSchema = schema.toString()
+                    systemMessage += "\n\nDB Schema:\n$dbSchema"
+
+                    withContext(Dispatchers.Main) {
+                        sendMessage("✅ DB 연결 성공. 스키마 정보가 학습되었습니다.", isUser = false)
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    sendMessage("❌ DB 연결 실패: ${e.message}", isUser = false)
+                }
+            }
+        }
     }
 }

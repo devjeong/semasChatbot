@@ -33,6 +33,8 @@ dependencies {
     implementation("org.json:json:20250517")  // 최신 버전 추가
     implementation("com.google.code.gson:gson:2.13.1")  // Gson 최신 버전 추가
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation(files("lib/tibero7-jdbc.jar"))
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
 }
 
 intellijPlatform {
