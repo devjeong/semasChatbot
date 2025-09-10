@@ -684,7 +684,7 @@ class ChatService(private val project: Project) {
         
         val messagePanel = JPanel(BorderLayout())
         val messageText = JTextArea(message)
-        
+
         if (isUser) {
             // 사용자 메시지 (우측, 파란색)
             messagePanel.background = Color(52, 152, 219)
@@ -807,7 +807,7 @@ class ChatService(private val project: Project) {
         // 컨테이너 패널도 동일한 높이로 설정하되 최대 높이 제한
         containerPanel.preferredSize = Dimension(Int.MAX_VALUE, actualHeight)
         containerPanel.maximumSize = Dimension(Int.MAX_VALUE, actualHeight)
-        
+
         messageWrapper.add(messagePanel)
         containerPanel.add(messageWrapper, BorderLayout.CENTER)
         
@@ -927,9 +927,9 @@ class ChatService(private val project: Project) {
     }
 
     /**
-     * 사용자 입력 유형을 분류합니다. (질문, 부분수정, 전체수정, 커서위치생성, RAG질문, 일반)
+     * 사용자 입력 유형을 분류합니다. (일반질문, RAG질문, 신규작성)
      */
-    private enum class UserInputType { INSTRUCTION, FULL_FILE_INSTRUCTION, CURSOR_CODE_GENERATION, RAG_QUESTION, GENERAL_QUESTION, EXTERNAL_FILE_EDIT, FILE_CREATION }
+    private enum class UserInputType { GENERAL_QUESTION,RAG_QUESTION, NEW_SOURCE }
 
     /**
      * 선택된 코드가 전체 파일인지 확인합니다.
@@ -984,135 +984,36 @@ class ChatService(private val project: Project) {
                 }
                 
                 """
-                You are an expert software developer and code analyst specializing in Java, Kotlin, Vue.js, and Tibero DB.
-                Your task is to answer the user's question based on the provided project code context.
-                
-                $contextCode
-                
-                User question: $userInput
-                
-                Please provide a detailed answer based on the code context above. 
-                Include specific references to the code when relevant, and explain how the code works.
-                
-                You MUST start your response with "[RAG_QUESTION] " followed by your answer.
-                Always respond in Korean.
-                """.trimIndent()
-            }
-            inputType == UserInputType.CURSOR_CODE_GENERATION -> {
-                // 커서 위치 기반 새로운 코드 생성 - RAG 기반으로 관련 코드 참조
-                val relevantChunks = searchRelevantCode(userInput, 3)
-                val contextCode = if (relevantChunks.isNotEmpty()) {
-                    buildString {
-                        appendLine("다음은 새 코드 생성과 관련된 프로젝트 코드 참조:")
-                        appendLine()
-                        relevantChunks.forEachIndexed { index, chunk ->
-                            appendLine("=== 참조 코드 ${index + 1}: ${chunk.fileName} (${chunk.type.name}) ===")
-                            appendLine("위치: ${chunk.filePath}:${chunk.startLine}-${chunk.endLine}")
-                            appendLine("시그니처: ${chunk.signature}")
-                            appendLine()
-                            appendLine("```")
-                            appendLine(chunk.content.take(600)) // 커서 생성에는 더 간결하게
-                            if (chunk.content.length > 600) appendLine("... (코드가 길어서 일부만 표시)")
-                            appendLine("```")
-                            appendLine()
-                        }
-                    }
-                } else {
-                    "관련 코드를 찾을 수 없어 파일 컨텍스트만을 참조합니다."
-                }
-                
-                val lines = fullFileContent?.lines() ?: listOf()
-                val numberedContent = lines.mapIndexed { index, line -> 
-                    "${index + 1}: $line" 
-                }.joinToString("\n")
-                
-                """
-                You are an expert software developer specializing in Java, Kotlin, Vue.js, and Tibero DB.
-                Your task is to generate NEW code that should be inserted at the current cursor position.
-                This is NOT about modifying existing code, but creating NEW functionality based on related project patterns.
+                아래 제공된 프로젝트 코드 컨텍스트와 사용자 질문을 바탕으로 답변하세요. 출력은 반드시 다음 Markdown 템플릿만 사용합니다.
 
+                템플릿:
+
+                ✅ 질문 요약 : {사용자 질문 요점}
+
+                ✅ 응답 : {응답 내용 (1000자 이내 요약, 정리)}
+
+                ✅ 출처 : {출처 (파일명, 라인 위치)}
+
+                규칙:
+                - 한국어로만 작성합니다.
+                - '질문 요약'에는 사용자의 질문 핵심을 1~2문장으로 요약합니다.
+                - '응답'은 1000자 이내로 간결하게 요약하고, 필요시 불릿을 사용할 수 있습니다.
+                - '출처'는 아래 참조 코드의 파일명과 라인 범위를 쉼표로 나열합니다. 형식: 파일명:시작라인-끝라인
+                - 참조 코드가 없거나 라인 정보를 알 수 없으면 '해당 없음'으로 표기합니다.
+                - 템플릿 외의 여분 텍스트는 출력하지 않습니다.
+
+                컨텍스트:
                 $contextCode
 
-                You MUST respond ONLY with the new code in this exact format:
-
-                [NewCode]
-                (The new code to be inserted goes here)
-
-                Current file context with line numbers:
-                ```
-                $numberedContent
-                ```
-
-                Current cursor position: Line ${cursorLine}
-                Current line content: "${currentLineText}"
-                File: ${cursorFileInfo}
-
-                User request: $userInput
-
-                Important guidelines:
-                1. Generate NEW code that fits naturally at the cursor position
-                2. Maintain proper code structure and formatting consistent with referenced patterns
-                3. Consider the surrounding code context and similar patterns from referenced code
-                4. Follow best practices and coding conventions seen in referenced code for ${cursorFileName}
-                5. Ensure the new code is syntactically correct and follows the project's style
-                6. If imports are needed, include them as part of the generated code
-                7. Use similar naming conventions and architectural patterns from the referenced code
-                8. Ensure the new code integrates well with existing project patterns
+                사용자 질문: $userInput
                 """.trimIndent()
             }
-            inputType == UserInputType.FULL_FILE_INSTRUCTION && codeContext != null -> {
-                // 전체 파일 수정 요청 (차분만 받기)
-                val lines = codeContext.lines()
-                val numberedContent = lines.mapIndexed { index, line -> 
-                    "${index + 1}: $line" 
-                }.joinToString("\n")
-                
-                """
-                You are an expert software developer specializing in Java, Kotlin, Vue.js, and Tibero DB.
-                Your task is to analyze the source file and provide ONLY the changes needed, not the entire file.
-                This will help reduce token usage significantly.
-
-                You MUST respond with only the specific changes in this exact format:
-
-                [FileChanges]
-                OPERATION:LINE_NUMBER:ORIGINAL_LINE:NEW_LINE
-                OPERATION:LINE_NUMBER:ORIGINAL_LINE:NEW_LINE
-                ...
-
-                Where OPERATION can be:
-                - REPLACE: Replace existing line
-                - INSERT: Insert new line after the specified line number
-                - DELETE: Delete the specified line
-
-                Current file content with line numbers:
-                ```
-                $numberedContent
-                ```
-
-                File: $fileContext
-                User request: $userInput
-
-                Example response format:
-                [FileChanges]
-                REPLACE:15:    public void oldMethod() {:    public void newMethod() {
-                INSERT:20::        // This is a new comment
-                DELETE:25:    // Old comment:
-
-                Important guidelines:
-                1. Provide ONLY the lines that need to be changed, inserted, or deleted
-                2. Be precise with line numbers (1-based indexing)
-                3. Maintain proper code structure and formatting
-                4. Keep existing functionality intact unless specifically requested to change
-                5. Add necessary imports if new features are added (use INSERT operations)
-                6. Follow best practices and coding conventions
-                """.trimIndent()
-            }
-            inputType == UserInputType.FILE_CREATION -> {
-                // 새 파일 생성 요청 처리 - RAG 기반으로 관련 코드 참조
+            inputType == UserInputType.NEW_SOURCE -> {
+                // 신규 소스 작성
                 val relevantChunks = searchRelevantCode(userInput, 5)
                 val contextCode = if (relevantChunks.isNotEmpty()) {
                     buildString {
-                        appendLine("다음은 파일 생성과 관련된 프로젝트 코드 참조:")
+                        appendLine("다음은 질문과 관련된 프로젝트 코드입니다:")
                         appendLine()
                         relevantChunks.forEachIndexed { index, chunk ->
                             appendLine("=== 참조 코드 ${index + 1}: ${chunk.fileName} (${chunk.type.name}) ===")
@@ -1120,117 +1021,39 @@ class ChatService(private val project: Project) {
                             appendLine("시그니처: ${chunk.signature}")
                             appendLine()
                             appendLine("```")
-                            appendLine(chunk.content.take(800)) // 파일 생성에는 조금 더 간결하게
-                            if (chunk.content.length > 800) appendLine("... (코드가 길어서 일부만 표시)")
+                            appendLine(chunk.content.take(1000)) // 너무 긴 코드는 잘라서 표시
+                            if (chunk.content.length > 1000) appendLine("... (코드가 길어서 일부만 표시)")
                             appendLine("```")
                             appendLine()
                         }
                     }
                 } else {
-                    "관련 코드를 찾을 수 없어 프로젝트 구조만을 참조합니다."
+                    "관련 코드를 찾을 수 없습니다."
                 }
-                
-                val projectStructureInfo = buildProjectStructureInfo()
+
                 """
-                You are an expert software developer specializing in Java, Kotlin, Vue.js, and Tibero DB.
-                Your task is to create a new file based on the user's request, current project structure, and related existing code.
-                
-                $contextCode
-                
-                $projectStructureInfo
-                
-                You MUST respond with the following format:
+                아래 제공된 프로젝트 코드 컨텍스트와 사용자 질문을 바탕으로 답변하세요. 출력은 반드시 다음 Markdown 템플릿만 사용합니다.
 
-                [FileCreation]
-                FILE_PATH: (relative path where the file should be created based on project structure above)
-                FILE_NAME: (name of the file including extension)
-                TEMPLATE_TYPE: (JAVA_CLASS, JAVA_INTERFACE, JAVA_ENUM, KOTLIN_CLASS, VUE_COMPONENT, XML_CONFIG, JSON_CONFIG, or CUSTOM)
-                CLASS_NAME: (if applicable, the main class/component name)
-                PACKAGE_NAME: (if applicable, the package name based on existing patterns)
-                CONTENT:
-                (The complete file content goes here)
+                템플릿:
 
-                User request: $userInput
+                ✅ 질문 요약 : {사용자 질문 요점}
 
-                Important guidelines:
-                1. Use both the project structure information and related code references above
-                2. Follow existing package naming conventions and coding patterns from the referenced code
-                3. Choose the correct template type based on file extension and similar existing files
-                4. Create meaningful class/component names that fit the project's naming patterns
-                5. Follow language-specific best practices and conventions seen in existing code
-                6. Include necessary imports and dependencies consistent with project structure and related code
-                7. Add proper documentation and comments in a style similar to existing code
-                8. Ensure the new file integrates well with the existing codebase structure and patterns
-                9. Reference similar patterns from the provided code examples when applicable
-                """.trimIndent()
-            }
-            inputType == UserInputType.EXTERNAL_FILE_EDIT -> {
-                // 외부 파일 수정 요청 처리 - RAG 기반으로 관련 코드 참조
-                val relevantChunks = searchRelevantCode(userInput, 5)
-                val contextCode = if (relevantChunks.isNotEmpty()) {
-                    buildString {
-                        appendLine("다음은 파일 수정과 관련된 프로젝트 코드 참조:")
-                        appendLine()
-                        relevantChunks.forEachIndexed { index, chunk ->
-                            appendLine("=== 참조 코드 ${index + 1}: ${chunk.fileName} (${chunk.type.name}) ===")
-                            appendLine("위치: ${chunk.filePath}:${chunk.startLine}-${chunk.endLine}")
-                            appendLine("시그니처: ${chunk.signature}")
-                            appendLine()
-                            appendLine("```")
-                            appendLine(chunk.content.take(800)) // 외부 파일 수정에는 간결하게
-                            if (chunk.content.length > 800) appendLine("... (코드가 길어서 일부만 표시)")
-                            appendLine("```")
-                            appendLine()
-                        }
-                    }
-                } else {
-                    "관련 코드를 찾을 수 없어 요청사항만을 기준으로 파일을 수정합니다."
-                }
-                
-                """
-                You are an expert software developer specializing in Java, Kotlin, Vue.js, and Tibero DB.
-                Your task is to modify an external file based on the user's request and related existing code patterns.
+                ✅ 응답 : {응답 내용 (1000자 이내 요약, 정리)}
 
+                ✅ 출처 : {출처 (파일명, 라인 위치)}
+
+                규칙:
+                - 한국어로만 작성합니다.
+                - '질문 요약'에는 사용자의 질문 핵심을 1~2문장으로 요약합니다.
+                - '응답'은 1000자 이내로 간결하게 요약하고, 필요시 불릿을 사용할 수 있습니다.
+                - '출처'는 아래 참조 코드의 파일명과 라인 범위를 쉼표로 나열합니다. 형식: 파일명:시작라인-끝라인
+                - 참조 코드가 없거나 라인 정보를 알 수 없으면 '해당 없음'으로 표기합니다.
+                - 템플릿 외의 여분 텍스트는 출력하지 않습니다.
+
+                컨텍스트:
                 $contextCode
 
-                You MUST respond with the following format:
-
-                [ExternalFileEdit]
-                FILE_PATH: (path to the file to be modified)
-                OPERATION: (MODIFY_EXISTING or CREATE_NEW)
-                CONTENT:
-                (The complete modified file content goes here)
-
-                User request: $userInput
-
-                Important guidelines:
-                1. Extract file path from the user's request
-                2. If the file doesn't exist, set OPERATION to CREATE_NEW
-                3. If the file exists, set OPERATION to MODIFY_EXISTING
-                4. Provide complete file content with modifications
-                5. Maintain existing code structure and formatting consistent with referenced code
-                6. Follow language-specific best practices seen in similar project files
-                7. Add proper error handling if applicable, following patterns from referenced code
-                8. Use similar coding patterns, naming conventions, and structure from the referenced code
-                9. Ensure consistency with the overall project architecture shown in the code references
-                """.trimIndent()
-            }
-            inputType == UserInputType.INSTRUCTION && codeContext != null -> {
-                // INSTRUCTION 유형일 경우, 선택 영역 수정 요청
-                """
-                You are an expert software developer specializing in Java, Kotlin, Vue.js, and Tibero DB.
-                Your task is to modify the selected source code snippet based on the user's request.
-                You MUST respond ONLY with the modified source code, following this exact format:
-
-                [Modified]
-                (The new, modified code snippet goes here)
-
-                Original selected code:
-                ```
-                $codeContext
-                ```
-
-                User request: $userInput
+                사용자 질문: $userInput
                 """.trimIndent()
             }
             else -> {
@@ -1280,20 +1103,26 @@ class ChatService(private val project: Project) {
                 }
                 
                 """
-                You are an expert software developer and code analyst specializing in Java, Kotlin, Vue.js, and Tibero DB.
-                Your task is to answer the user's question based on the provided project code context and general programming knowledge.
-                
+                아래 제공된 컨텍스트와 사용자 질문을 바탕으로 답변하세요. 출력은 반드시 다음 Markdown 템플릿만 사용합니다.
+
+                템플릿:
+
+                ✅ 질문 요약 : {사용자 질문 요점}
+
+                ✅ 응답 : {응답 내용 (1000자 이내 요약, 정리)}
+
+                ✅ 출처 : {출처 (파일명, 라인 위치)}
+
+                규칙:
+                - 한국어로만 작성합니다.
+                - '질문 요약'에는 사용자의 질문 핵심을 1~2문장으로 요약합니다.
+                - '응답'은 1000자 이내로 간결하게 요약하고, 필요시 불릿을 사용할 수 있습니다.
+                - '출처'는 컨텍스트에 포함된 코드 참조의 파일명과 라인 범위를 쉼표로 나열합니다. 형식: 파일명:시작라인-끝라인
+                - 참조 코드가 없거나 라인 정보를 알 수 없으면 '해당 없음'으로 표기합니다.
+                - 템플릿 외의 여분 텍스트는 출력하지 않습니다.
+
+                컨텍스트:
                 $basePrompt
-                
-                Important guidelines:
-                1. Reference the provided code context when relevant to the question
-                2. Provide practical advice consistent with the project's patterns and architecture
-                3. Use similar coding styles and conventions seen in the referenced code
-                4. If no relevant code is found, provide general best practices for the technologies used
-                5. Always prioritize solutions that fit well with the existing codebase
-                
-                You MUST start your response with "[${inputType.name}] " followed by your answer.
-                Always respond in Korean.
                 """.trimIndent()
             }
         }
@@ -2041,6 +1870,7 @@ class ChatService(private val project: Project) {
         } catch (_: Exception) {
             // 네트워크 오류나 파싱 오류 시 무시하고 휴리스틱으로 폴백
         }
+        /**
         
         // 파일 경로/위치 질문 먼저 감지 (우선순위 높음)
         // 단, 파일 생성/수정 동사가 함께 있으면 질문이 아닌 작업 요청으로 분류
@@ -2073,7 +1903,7 @@ class ChatService(private val project: Project) {
         if (hasFilePathQuestion && !hasActionVerb) {
             return UserInputType.RAG_QUESTION
         }
-        /**
+
         // 새 파일 생성 요청 감지
         val fileCreationKeywords = listOf(
             "파일 생성", "파일 만들어", "새 파일", "파일 작성", "파일 만들",
@@ -2214,12 +2044,13 @@ class ChatService(private val project: Project) {
         return when (token) {
             "RAG_QUESTION" -> UserInputType.RAG_QUESTION
             "GENERAL_QUESTION" -> UserInputType.GENERAL_QUESTION
-            "NEW_SOURCE" -> mapNewSourceToConcreteType(userInput)
+            //"NEW_SOURCE" -> mapNewSourceToConcreteType(userInput)
+            "NEW_SOURCE" -> UserInputType.NEW_SOURCE
             else -> null
         }
     }
 
-    // NEW_SOURCE를 실제 처리 타입으로 구체화
+   /* // NEW_SOURCE를 실제 처리 타입으로 구체화
     private fun mapNewSourceToConcreteType(userInput: String): UserInputType {
         val s = userInput.lowercase()
 
@@ -2240,7 +2071,7 @@ class ChatService(private val project: Project) {
             mentionsExplicitFile -> UserInputType.FILE_CREATION
             else -> if (cursorLine != null) UserInputType.CURSOR_CODE_GENERATION else UserInputType.FILE_CREATION
         }
-    }
+    }*/
     
     /**
      * 인덱싱된 코드에서 사용자 질문과 관련된 코드 조각들을 검색합니다.
