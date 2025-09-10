@@ -3717,7 +3717,7 @@ button:hover {
      * @param user 사용자
      * @param password 비밀번호
      */
-    fun connectToDB(dbType: String, host: String, port: String, dbName: String, user: String, password: String) {
+    fun connectToDB(dbType: String, host: String, port: String, dbName: String, user: String, password: String, targetTables: String = "") {
         sendMessage("🕒 DB 스키마 학습 중... 잠시만 기다려주세요.", isUser = false)
 
         CoroutineScope(Dispatchers.IO).launch {
@@ -3731,24 +3731,40 @@ button:hover {
                 }
             }
 
+            println("Debug: Attempting DB connection with URL: $url")
+
             try {
+                println("Debug: Loading Tibero driver")
                 Class.forName("com.tmax.tibero.jdbc.TbDriver")
+                println("Debug: Driver loaded successfully")
+
+                println("Debug: Connecting to database")
                 DriverManager.getConnection(url, user, password).use { conn ->
+                    println("Debug: Connected successfully")
+
                     val meta = conn.metaData
 
                     val schema = StringBuilder()
                     val schemaPattern = "SEMAS24"
-                    val tablesRs: ResultSet = meta.getTables(null, schemaPattern, "%", arrayOf("TABLE"))
-
                     val tableNames = mutableListOf<String>()
-                    while (tablesRs.next()) {
-                        tableNames.add(tablesRs.getString("TABLE_NAME"))
+
+                    if (targetTables.isBlank()) {
+                        println("Debug: Fetching all tables")
+                        val tablesRs: ResultSet = meta.getTables(null, schemaPattern, "TB_%", arrayOf("TABLE"))
+                        while (tablesRs.next()) {
+                            tableNames.add(tablesRs.getString("TABLE_NAME"))
+                        }
+                        tablesRs.close()
+                        println("Debug: Found ${tableNames.size} tables")
+                    } else {
+                        tableNames.addAll(targetTables.split(",").map { it.trim() })
+                        println("Debug: Using specified tables: $tableNames")
                     }
-                    tablesRs.close()
 
                     // Parallel column collection
                     val columnJobs = tableNames.map { tableName ->
                         async {
+                            println("Debug: Fetching columns for $tableName")
                             val columnsRs: ResultSet = meta.getColumns(null, schemaPattern, tableName, "%")
                             val tableSchema = StringBuilder("Table: $tableName\n")
                             while (columnsRs.next()) {
@@ -3757,6 +3773,7 @@ button:hover {
                                 tableSchema.append("  - $colName ($colType)\n")
                             }
                             columnsRs.close()
+                            println("Debug: Fetched columns for $tableName")
                             tableSchema.toString()
                         }
                     }
@@ -3768,10 +3785,12 @@ button:hover {
                     systemMessage += "\n\nDB Schema:\n$dbSchema"
 
                     withContext(Dispatchers.Main) {
+                        println("Debug: Sending success message")
                         sendMessage("✅ DB 연결 성공. 스키마 정보가 학습되었습니다.", isUser = false)
                     }
                 }
             } catch (e: Exception) {
+                println("Debug: Error in DB connection: ${e.message}")
                 withContext(Dispatchers.Main) {
                     sendMessage("❌ DB 연결 실패: ${e.message}", isUser = false)
                 }

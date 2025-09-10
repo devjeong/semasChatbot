@@ -337,6 +337,14 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             constraints.gridx = 1
             dbPanel.add(passwordField, constraints)
 
+            // Add target tables field
+            constraints.gridx = 0
+            constraints.gridy = 6
+            dbPanel.add(JLabel("대상 테이블 (콤마 구분, 비우면 전체):"), constraints)
+            val targetTablesField = JTextField(20)
+            constraints.gridx = 1
+            dbPanel.add(targetTablesField, constraints)
+
             // Auto-fill based on environment selection
             envCombo.addActionListener {
                 val selectedEnv = envCombo.selectedItem as String
@@ -361,7 +369,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             // Add test connection button
             val testButton = JButton("연결 테스트")
             constraints.gridx = 0
-            constraints.gridy = 6
+            constraints.gridy = 7
             constraints.gridwidth = 2
             dbPanel.add(testButton, constraints)
 
@@ -372,6 +380,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                 val dbName = dbNameField.text.trim()
                 val user = userField.text.trim()
                 val password = String(passwordField.password).trim()
+                val targetTables = targetTablesField.text.trim()
 
                 if (host.isNotEmpty() && port.isNotEmpty() && dbName.isNotEmpty() && user.isNotEmpty() && password.isNotEmpty()) {
                     try {
@@ -403,9 +412,10 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                 val dbName = dbNameField.text.trim()
                 val user = userField.text.trim()
                 val password = String(passwordField.password).trim()
+                val targetTables = targetTablesField.text.trim()
 
                 if (host.isNotEmpty() && port.isNotEmpty() && dbName.isNotEmpty() && user.isNotEmpty() && password.isNotEmpty()) {
-                    chatService.connectToDB(dbType, host, port, dbName, user, password)
+                    chatService.connectToDB(dbType, host, port, dbName, user, password, targetTables)
                 } else {
                     JOptionPane.showMessageDialog(panel, "모든 필드를 입력해주세요.", "입력 오류", JOptionPane.ERROR_MESSAGE)
                 }
