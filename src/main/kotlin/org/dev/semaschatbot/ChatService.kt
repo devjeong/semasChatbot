@@ -3724,7 +3724,7 @@ button:hover {
             val url = when (dbType) {
                 "Tibero" -> "jdbc:tibero:thin:@$host:$port:$dbName"
                 else -> {
-                    withContext(Dispatchers.Main) {
+                    ApplicationManager.getApplication().invokeLater {
                         sendMessage("지원되지 않는 DB 종류: $dbType", isUser = false)
                     }
                     return@launch
@@ -3784,14 +3784,14 @@ button:hover {
                     dbSchema = schema.toString()
                     systemMessage += "\n\nDB Schema:\n$dbSchema"
 
-                    withContext(Dispatchers.Main) {
+                    ApplicationManager.getApplication().invokeLater {
                         println("Debug: Sending success message")
                         sendMessage("✅ DB 연결 성공. 스키마 정보가 학습되었습니다.", isUser = false)
                     }
                 }
             } catch (e: Exception) {
                 println("Debug: Error in DB connection: ${e.message}")
-                withContext(Dispatchers.Main) {
+                ApplicationManager.getApplication().invokeLater {
                     sendMessage("❌ DB 연결 실패: ${e.message}", isUser = false)
                 }
             }
