@@ -258,6 +258,18 @@ class ChatService(private val project: Project) {
     // DB 스키마 정보
     private var dbSchema: String? = null
 
+    // LM Studio 모델 선택 상태
+    @Volatile
+    private var selectedModelId: String = "default-model"
+
+    fun setSelectedModel(modelId: String) {
+        selectedModelId = modelId
+    }
+
+    fun getSelectedModel(): String = selectedModelId
+
+    fun listLmStudioModels(): List<String> = apiClient.listModels()
+
     /**
      * LmStudio 서버의 URL을 설정합니다.
      * @param url 새로운 서버 URL
@@ -691,6 +703,7 @@ class ChatService(private val project: Project) {
                         // 확실한 스크롤 이동을 위한 추가 처리
                         javax.swing.SwingUtilities.invokeLater {
                             scrollBar.value = scrollBar.maximum
+                            focusLastMessage()
                         }
                     }
                 }
@@ -1167,6 +1180,7 @@ class ChatService(private val project: Project) {
         apiClient.sendChatRequestStream(
             userMessage = prompt,
             systemMessage = systemMessage,
+            modelId = selectedModelId,
             onDelta = { delta ->
                 ApplicationManager.getApplication().invokeLater {
                     val existingPanel = initialPanelRef[0]
@@ -1184,6 +1198,7 @@ class ChatService(private val project: Project) {
                             scrollToBottom()
                             initialPanelRef[0] = messagePanel
                             initialTextAreaRef[0] = findTextArea(messagePanel)
+                            focusMessagePanel(messagePanel)
                         }
                     } else {
                         // 이후 델타는 누적하고, 전체 텍스트 기준으로 버블을 재생성하여 크기를 정확히 맞춤
@@ -1191,6 +1206,7 @@ class ChatService(private val project: Project) {
                         rebuildMessagePanel(existingPanel, newText) { newPanel ->
                             initialPanelRef[0] = newPanel
                             initialTextAreaRef[0] = findTextArea(newPanel)
+                            focusMessagePanel(newPanel)
                         }
                         scrollToBottom()
                     }
@@ -1342,8 +1358,34 @@ class ChatService(private val project: Project) {
         scrollPane?.let { scroll ->
             scroll.validate()
             val scrollBar = scroll.verticalScrollBar
+            // 1) 즉시 최대값으로 이동
             scrollBar.value = scrollBar.maximum
-            javax.swing.SwingUtilities.invokeLater { scrollBar.value = scrollBar.maximum }
+
+            // 2) 마지막 메시지 컴포넌트가 보이도록 뷰포트 스크롤
+            val panel = chatPanel
+            if (panel != null && panel.componentCount > 0) {
+                val last = panel.getComponent(panel.componentCount - 1)
+                val bounds = last.bounds
+                javax.swing.SwingUtilities.invokeLater {
+                    scroll.viewport.scrollRectToVisible(bounds)
+                    scrollBar.value = scrollBar.maximum
+                }
+            } else {
+                javax.swing.SwingUtilities.invokeLater { scrollBar.value = scrollBar.maximum }
+            }
+
+            // 3) 스트리밍 레이아웃 지연을 고려해 한 번 더 시도
+            val timer = javax.swing.Timer(60) { _ ->
+                val sb = scroll.verticalScrollBar
+                sb.value = sb.maximum
+                val p = chatPanel
+                if (p != null && p.componentCount > 0) {
+                    val lastComp = p.getComponent(p.componentCount - 1)
+                    scroll.viewport.scrollRectToVisible(lastComp.bounds)
+                }
+            }
+            timer.isRepeats = false
+            timer.start()
         }
     }
 
@@ -1356,6 +1398,37 @@ class ChatService(private val project: Project) {
             }
         }
         return null
+    }
+
+    private fun focusMessagePanel(messagePanel: JPanel) {
+        val scroll = scrollPane ?: return
+        val ta = findTextArea(messagePanel)
+        if (ta != null) {
+            ta.caretPosition = ta.text.length
+            ta.requestFocusInWindow()
+        }
+        javax.swing.SwingUtilities.invokeLater {
+            scroll.viewport.scrollRectToVisible(messagePanel.bounds)
+            val sb = scroll.verticalScrollBar
+            sb.value = sb.maximum
+        }
+    }
+
+    private fun focusLastMessage() {
+        val panel = chatPanel ?: return
+        val scroll = scrollPane ?: return
+        if (panel.componentCount == 0) return
+        val last = panel.getComponent(panel.componentCount - 1)
+        val ta = findTextArea(last)
+        if (ta != null) {
+            ta.caretPosition = ta.text.length
+            ta.requestFocusInWindow()
+        }
+        javax.swing.SwingUtilities.invokeLater {
+            scroll.viewport.scrollRectToVisible(last.bounds)
+            val sb = scroll.verticalScrollBar
+            sb.value = sb.maximum
+        }
     }
 
     private fun adjustMessagePanelSize(textArea: JTextArea, messagePanel: JPanel) {

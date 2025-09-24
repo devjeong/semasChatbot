@@ -141,6 +141,14 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         // 버튼들을 입력창 아래쪽에 배치하는 패널
         val bottomButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 5))
         bottomButtonPanel.background = Color(245, 245, 245)
+        // 모델 선택 콤보박스 (하단 입력란 아래, 초기화 버튼 옆)
+        val modelLabel = JLabel("모델:")
+        modelLabel.font = Font("SansSerif", Font.BOLD, 11)
+        modelLabel.foreground = Color(80, 80, 80)
+        val modelCombo = createStyledComboBox(arrayOf("default-model"))
+        modelCombo.toolTipText = "LM Studio 모델 선택"
+        bottomButtonPanel.add(modelLabel)
+        bottomButtonPanel.add(modelCombo)
         bottomButtonPanel.add(resetButton) // 초기화 버튼을 먼저 추가
         bottomButtonPanel.add(sendButton) // 전송 버튼을 나중에 추가 (오른쪽에 위치)
         inputPanel.add(bottomButtonPanel, BorderLayout.SOUTH) // 입력 패널의 아래쪽에 버튼 패널을 추가합니다.
@@ -502,6 +510,23 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             } else {
                 chatService.sendMessage("안녕하세요! Protein 26 입니다. 무엇을 도와드릴까요?", isUser = false)
             }
+            // LM Studio 모델 목록 로드 (백그라운드)
+            ApplicationManager.getApplication().executeOnPooledThread {
+                try {
+                    val models = chatService.listLmStudioModels()
+                    if (models.isNotEmpty()) {
+                        javax.swing.SwingUtilities.invokeLater {
+                            modelCombo.model = DefaultComboBoxModel(models.toTypedArray())
+                            chatService.setSelectedModel(models.first())
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        // 콤보박스 선택 변경 시 ChatService에 반영
+        modelCombo.addActionListener {
+            (modelCombo.selectedItem as? String)?.let { chatService.setSelectedModel(it) }
         }
     }
 
@@ -549,6 +574,42 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         button.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
         
         return button
+    }
+
+    /**
+     * 버튼들과 톤앤매너를 맞춘 콤보박스를 생성합니다.
+     */
+    private fun createStyledComboBox(items: Array<String>): JComboBox<String> {
+        val combo = object : JComboBox<String>(items) {
+            override fun updateUI() {
+                super.updateUI()
+                // 드롭다운 아이템 렌더러 스타일 조정
+                renderer = object : DefaultListCellRenderer() {
+                    override fun getListCellRendererComponent(
+                        list: JList<*>, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
+                    ): Component {
+                        val c = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus) as JLabel
+                        c.border = EmptyBorder(4, 10, 4, 10)
+                        c.font = Font("SansSerif", Font.PLAIN, 12)
+                        return c
+                    }
+                }
+            }
+        }
+
+        combo.font = Font("SansSerif", Font.PLAIN, 12)
+        combo.background = Color(255, 255, 255)
+        combo.foreground = Color(33, 37, 41)
+        combo.isOpaque = true
+        combo.border = CompoundBorder(
+            LineBorder(Color(200, 200, 200), 1, true),
+            EmptyBorder(2, 8, 2, 8)
+        )
+        combo.preferredSize = Dimension(220, 30)
+        combo.maximumSize = Dimension(Short.MAX_VALUE.toInt(), 30)
+        combo.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        combo.isFocusable = false
+        return combo
     }
 
     /**

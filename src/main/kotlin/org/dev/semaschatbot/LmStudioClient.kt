@@ -31,6 +31,36 @@ class LmStudioClient(
     }
 
     /**
+     * LM Studio에서 사용 가능한 모델 목록을 반환합니다. (OpenAI 호환 /v1/models)
+     */
+    fun listModels(): List<String> {
+        val request = Request.Builder()
+            .url("$baseUrl/models")
+            .get()
+            .build()
+
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return emptyList()
+                }
+                val body = response.body?.string() ?: return emptyList()
+                val json = gson.fromJson(body, JsonObject::class.java)
+                val data = json.getAsJsonArray("data") ?: return emptyList()
+                data.mapNotNull { el ->
+                    try {
+                        el.asJsonObject.get("id")?.asString
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
      * 현재 설정된 기본 URL을 반환합니다.
      * @return 현재 기본 URL
      */
