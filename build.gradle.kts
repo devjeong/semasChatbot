@@ -63,7 +63,7 @@ intellijPlatform {
                 types = listOf(IntelliJPlatformType.IntellijIdeaUltimate)
                 channels = listOf(ProductRelease.Channel.RELEASE)
                 sinceBuild = "241.*"
-                untilBuild = "251.*"
+                untilBuild = "252.*"
             }
         }
     }
@@ -80,6 +80,6 @@ tasks {
     }
     patchPluginXml {
         sinceBuild.set("241") // 2024.1 버전부터 호환
-        untilBuild.set("251.*") // 2025.1 버전의 모든 릴리스까지 호환
+        untilBuild.set("252.*") // 2025.1 버전의 모든 릴리스까지 호환
     }
 }
