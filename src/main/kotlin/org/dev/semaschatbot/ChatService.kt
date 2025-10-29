@@ -268,7 +268,16 @@ class ChatService(private val project: Project) {
 
     fun getSelectedModel(): String = selectedModelId
 
-    fun listLmStudioModels(): List<String> = apiClient.listModels()
+    fun listLmStudioModels(): List<String> {
+        return try {
+            val future = ApplicationManager.getApplication().executeOnPooledThread<List<String>> {
+                apiClient.listModels()
+            }
+            future.get()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
 
     /**
      * LmStudio 서버의 URL을 설정합니다.
@@ -2143,7 +2152,12 @@ class ChatService(private val project: Project) {
             출력 형식: 위 토큰 중 정확히 하나만. 공백/마크다운/설명 불가.
         """.trimIndent()
 
-        val response = apiClient.sendChatRequest(userInput, systemPrompt) ?: return null
+        val response = try {
+            val future = ApplicationManager.getApplication().executeOnPooledThread<String?> {
+                apiClient.sendChatRequest(userInput, systemPrompt)
+            }
+            future.get()
+        } catch (_: Exception) { null } ?: return null
         val token = response.trim().uppercase()
         return when (token) {
             "RAG_QUESTION" -> UserInputType.RAG_QUESTION
@@ -2806,7 +2820,19 @@ class ChatService(private val project: Project) {
         try {
             val virtualFile = LocalFileSystem.getInstance().findFileByPath(filePath.replace("\\", "/"))
             if (virtualFile != null && virtualFile.exists() && !virtualFile.isDirectory) {
-                val content = String(virtualFile.contentsToByteArray(), virtualFile.charset)
+                val charset = try { virtualFile.charset } catch (_: Exception) { Charsets.UTF_8 }
+                val content = virtualFile.inputStream.use { input ->
+                    input.reader(charset).buffered().use { reader ->
+                        val buf = CharArray(8192)
+                        val sb = StringBuilder()
+                        while (true) {
+                            val n = reader.read(buf)
+                            if (n <= 0) break
+                            sb.append(buf, 0, n)
+                        }
+                        sb.toString()
+                    }
+                }
                 return Pair(content, virtualFile)
             }
         } catch (e: Exception) {

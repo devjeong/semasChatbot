@@ -36,7 +36,9 @@ data class CodeChunk(
     val startLine: Int,
     val endLine: Int,
     val signature: String = "",
-    val summary: String = ""
+    val summary: String = "",
+    val startOffset: Int = -1,
+    val endOffset: Int = -1
 )
 
 /**
@@ -64,6 +66,7 @@ class CodeIndexingService(private val project: Project) {
     
     private val codeChunks = ConcurrentHashMap<String, CodeChunk>()
     private val supportedExtensions = setOf("java", "kt", "js", "ts", "vue", "sql", "xml", "yml", "yaml", "json")
+    private val invertedIndex = ConcurrentHashMap<String, MutableSet<String>>()
     
     /**
      * 프로젝트 전체를 스캔하여 코드 조각들을 인덱싱합니다.
@@ -71,6 +74,7 @@ class CodeIndexingService(private val project: Project) {
      */
     fun indexProject(): Int {
         codeChunks.clear()
+        invertedIndex.clear()
         val projectBaseDir = project.baseDir ?: return 0
         
         var chunkCount = 0
@@ -103,7 +107,7 @@ class CodeIndexingService(private val project: Project) {
                 
                 // 안전한 파일 내용 읽기
                 val content = try {
-                    String(file.contentsToByteArray())
+                    readFileContentStreaming(file)
                 } catch (e: Exception) {
                     "// 파일 내용을 읽을 수 없습니다: ${e.message}"
                 }
@@ -112,12 +116,17 @@ class CodeIndexingService(private val project: Project) {
                 val filePath = file.path
                 
                 // 전체 파일을 하나의 chunk로 추가
-                chunks.add(createFileChunk(filePath, fileName, content))
+                val fileChunk = createFileChunk(filePath, fileName, content)
+                chunks.add(fileChunk)
+                // 파일 단위 토큰 역색인 구축
+                indexFileTokens(fileChunk)
                 
                 // PSI를 이용하여 세부 요소들 추출
                 when (file.extension?.lowercase()) {
                     "java", "kt" -> {
-                        chunks.addAll(extractJavaKotlinElements(psiFile, filePath, fileName))
+                        if (isDetailedIndexingEnabled()) {
+                            chunks.addAll(extractJavaKotlinElements(psiFile, filePath, fileName))
+                        }
                     }
                     "js", "ts" -> {
                         chunks.addAll(extractJavaScriptElements(psiFile, filePath, fileName))
@@ -147,25 +156,52 @@ class CodeIndexingService(private val project: Project) {
                 else -> 
                     "파일 인덱싱 중 오류 발생: ${file.path} - ${e.message}"
             }
-            println(errorMessage)
+            if (isDebugMode()) println(errorMessage)
             
             // 오류 발생 시에도 최소한 파일 전체 chunk는 생성하려고 시도
             try {
-                val content = String(file.contentsToByteArray())
+                val content = readFileContentStreaming(file)
                 chunks.add(createFileChunk(file.path, file.name, content))
             } catch (fallbackException: Exception) {
-                println("파일 전체 chunk 생성도 실패: ${file.path} - ${fallbackException.message}")
+                if (isDebugMode()) println("파일 전체 chunk 생성도 실패: ${file.path} - ${fallbackException.message}")
             }
         }
         
         return chunks
+    }
+
+    private fun isDetailedIndexingEnabled(): Boolean {
+        return System.getProperty("semas.index.detailed", "false").toBoolean()
+    }
+
+    private fun isDebugMode(): Boolean {
+        return System.getProperty("semas.debug", "false").toBoolean()
+    }
+
+    /**
+     * 스트리밍 방식으로 파일 내용을 읽습니다. 대용량 파일에서도 불필요한 중간 byte 배열 생성을 피합니다.
+     */
+    private fun readFileContentStreaming(file: VirtualFile): String {
+        val charset = try { file.charset } catch (_: Exception) { Charsets.UTF_8 }
+        file.inputStream.use { input ->
+            input.reader(charset).buffered().use { reader ->
+                val buffer = CharArray(8192)
+                val sb = StringBuilder()
+                while (true) {
+                    val n = reader.read(buffer)
+                    if (n <= 0) break
+                    sb.append(buffer, 0, n)
+                }
+                return sb.toString()
+            }
+        }
     }
     
     /**
      * 파일 전체를 하나의 chunk로 생성합니다.
      */
     private fun createFileChunk(filePath: String, fileName: String, content: String): CodeChunk {
-        val lines = content.lines()
+        val lineCount = countLines(content)
         return CodeChunk(
             id = generateId(filePath, "FILE", 0),
             filePath = filePath,
@@ -173,9 +209,11 @@ class CodeIndexingService(private val project: Project) {
             content = content,
             type = CodeType.FILE,
             startLine = 1,
-            endLine = lines.size,
+            endLine = lineCount,
             signature = fileName,
-            summary = "전체 파일: $fileName (${lines.size}줄)"
+            summary = "전체 파일: $fileName (${lineCount}줄)",
+            startOffset = 0,
+            endOffset = content.length
         )
     }
     
@@ -200,7 +238,7 @@ class CodeIndexingService(private val project: Project) {
                                 chunks.add(createMethodChunk(method, filePath, fileName))
                             }
                         } catch (e: Exception) {
-                            println("메서드 처리 중 오류: ${method.name} - ${e.message}")
+                            if (isDebugMode()) println("메서드 처리 중 오류: ${method.name} - ${e.message}")
                         }
                     }
                     
@@ -211,12 +249,12 @@ class CodeIndexingService(private val project: Project) {
                                 chunks.add(createFieldChunk(field, filePath, fileName))
                             }
                         } catch (e: Exception) {
-                            println("필드 처리 중 오류: ${field.name} - ${e.message}")
+                            if (isDebugMode()) println("필드 처리 중 오류: ${field.name} - ${e.message}")
                         }
                     }
                 }
             } catch (e: Exception) {
-                println("클래스 처리 중 오류: ${psiClass.name} - ${e.message}")
+                if (isDebugMode()) println("클래스 처리 중 오류: ${psiClass.name} - ${e.message}")
             }
         }
         
@@ -231,22 +269,21 @@ class CodeIndexingService(private val project: Project) {
         val (startLine, endLine) = getSafeLineNumbers(document, psiClass.textOffset, psiClass.textLength)
         
         // 안전한 텍스트 접근
-        val content = try {
-            psiClass.text ?: "// 클래스 내용을 읽을 수 없습니다."
-        } catch (e: Exception) {
-            "// 클래스 내용을 읽을 수 없습니다: ${e.message}"
-        }
+        val startOffset = psiClass.textOffset
+        val endOffset = psiClass.textOffset + psiClass.textLength
         
         return CodeChunk(
             id = generateId(filePath, "CLASS", startLine),
             filePath = filePath,
             fileName = fileName,
-            content = content,
+            content = "",
             type = CodeType.CLASS,
             startLine = startLine,
             endLine = endLine,
             signature = psiClass.qualifiedName ?: psiClass.name ?: "Unknown",
-            summary = "클래스: ${psiClass.name}"
+            summary = "클래스: ${psiClass.name}",
+            startOffset = startOffset,
+            endOffset = endOffset
         )
     }
     
@@ -257,12 +294,8 @@ class CodeIndexingService(private val project: Project) {
         val document = psiMethod.containingFile.viewProvider.document
         val (startLine, endLine) = getSafeLineNumbers(document, psiMethod.textOffset, psiMethod.textLength)
         
-        // 안전한 텍스트 접근
-        val content = try {
-            psiMethod.text ?: "// 메서드 내용을 읽을 수 없습니다."
-        } catch (e: Exception) {
-            "// 메서드 내용을 읽을 수 없습니다: ${e.message}"
-        }
+        val startOffset = psiMethod.textOffset
+        val endOffset = psiMethod.textOffset + psiMethod.textLength
         
         // 안전한 시그니처 생성 (타입 정보 접근 시 예외 처리)
         val signature = try {
@@ -282,12 +315,14 @@ class CodeIndexingService(private val project: Project) {
             id = generateId(filePath, "METHOD", startLine),
             filePath = filePath,
             fileName = fileName,
-            content = content,
+            content = "",
             type = CodeType.METHOD,
             startLine = startLine,
             endLine = endLine,
             signature = signature,
-            summary = "메서드: ${psiMethod.name}"
+            summary = "메서드: ${psiMethod.name}",
+            startOffset = startOffset,
+            endOffset = endOffset
         )
     }
     
@@ -298,12 +333,8 @@ class CodeIndexingService(private val project: Project) {
         val document = psiField.containingFile.viewProvider.document
         val (startLine, endLine) = getSafeLineNumbers(document, psiField.textOffset, psiField.textLength)
         
-        // 안전한 텍스트 접근
-        val content = try {
-            psiField.text ?: "// 필드 내용을 읽을 수 없습니다."
-        } catch (e: Exception) {
-            "// 필드 내용을 읽을 수 없습니다: ${e.message}"
-        }
+        val startOffset = psiField.textOffset
+        val endOffset = psiField.textOffset + psiField.textLength
         
         // 안전한 시그니처 생성 (타입 정보 접근 시 예외 처리)
         val signature = try {
@@ -321,12 +352,14 @@ class CodeIndexingService(private val project: Project) {
             id = generateId(filePath, "FIELD", startLine),
             filePath = filePath,
             fileName = fileName,
-            content = content,
+            content = "",
             type = CodeType.FIELD,
             startLine = startLine,
             endLine = endLine,
             signature = signature,
-            summary = "필드: ${psiField.name}"
+            summary = "필드: ${psiField.name}",
+            startOffset = startOffset,
+            endOffset = endOffset
         )
     }
     
@@ -371,41 +404,35 @@ class CodeIndexingService(private val project: Project) {
             return chunks
         }
         
-        val lines = content.lines()
-        
-        // 의미 있는 코드 블록들을 찾아서 chunk로 생성
+        // 의미 있는 코드 블록들을 찾아서 chunk로 생성 (라인 리스트를 만들지 않음)
         var currentChunk = StringBuilder()
         var chunkStartLine = 1
-        var lineCount = 0
+        var bufferedCount = 0
+        var currentLineNumber = 0
         
-        lines.forEachIndexed { index, line ->
-            val lineNumber = index + 1
-            val trimmedLine = line.trim()
-            
-            if (trimmedLine.isNotEmpty()) {
+        content.lineSequence().forEach { line ->
+            currentLineNumber += 1
+            val trimmed = line.trim()
+            if (trimmed.isNotEmpty()) {
                 if (currentChunk.isEmpty()) {
-                    chunkStartLine = lineNumber
+                    chunkStartLine = currentLineNumber
                 }
-                currentChunk.appendLine(line)
-                lineCount++
-                
-                // 일정 라인 수마다 chunk 생성
-                if (lineCount >= 10) {
+                currentChunk.append(line).append('\n')
+                bufferedCount += 1
+                if (bufferedCount >= 10) {
                     chunks.add(createGenericChunk(
                         filePath, fileName, currentChunk.toString().trim(),
-                        chunkStartLine, lineNumber
+                        chunkStartLine, currentLineNumber
                     ))
                     currentChunk.clear()
-                    lineCount = 0
+                    bufferedCount = 0
                 }
             }
         }
-        
-        // 남은 내용 처리
         if (currentChunk.isNotEmpty()) {
             chunks.add(createGenericChunk(
                 filePath, fileName, currentChunk.toString().trim(),
-                chunkStartLine, lines.size
+                chunkStartLine, currentLineNumber
             ))
         }
         
@@ -427,6 +454,16 @@ class CodeIndexingService(private val project: Project) {
             signature = "$fileName:$startLine-$endLine",
             summary = "코드 블록: $fileName ($startLine-$endLine 줄)"
         )
+    }
+
+    /**
+     * 라인 수를 리스트 생성 없이 계산합니다.
+     */
+    private fun countLines(text: String): Int {
+        if (text.isEmpty()) return 0
+        var count = 1
+        for (ch in text) if (ch == '\n') count++
+        return count
     }
     
     /**
@@ -506,11 +543,72 @@ class CodeIndexingService(private val project: Project) {
      * 키워드로 코드 조각들을 검색합니다. (단순 텍스트 매칭)
      */
     fun searchByKeyword(keyword: String): List<CodeChunk> {
-        return codeChunks.values.filter { 
-            it.content.contains(keyword, ignoreCase = true) ||
-            it.signature.contains(keyword, ignoreCase = true) ||
-            it.summary.contains(keyword, ignoreCase = true)
+        if (keyword.isEmpty()) return emptyList()
+        val lower = keyword.lowercase()
+        // 0) 역색인 우선 사용(단순 토큰 질의인 경우)
+        if (isSimpleToken(lower)) {
+            val ids = invertedIndex[lower]
+            if (!ids.isNullOrEmpty()) {
+                val hits = ids.mapNotNull { id -> codeChunks[id] }
+                if (hits.isNotEmpty()) return hits
+            }
         }
+        // 파일 경로 -> FILE chunk 본문/소문자 캐시
+        val fileContentCache = HashMap<String, String>()
+        val fileLowerCache = HashMap<String, String>()
+        return codeChunks.values.filter { chunk ->
+            // 1) content 직접 검사
+            val hasDirect = if (chunk.content.isNotEmpty()) {
+                chunk.content.contains(keyword, ignoreCase = true)
+            } else false
+            if (hasDirect) return@filter true
+            // 2) 시그니처/요약 검사
+            if (chunk.signature.contains(keyword, ignoreCase = true)) return@filter true
+            if (chunk.summary.contains(keyword, ignoreCase = true)) return@filter true
+            // 3) 범위 참조가 있는 경우, 파일 본문에서 구간만 검사
+            if (chunk.startOffset >= 0 && chunk.endOffset > chunk.startOffset) {
+                val fileText = fileContentCache.getOrPut(chunk.filePath) {
+                    // FILE chunk에서 본문 조회
+                    val fileChunk = codeChunks.values.firstOrNull { it.filePath == chunk.filePath && it.type == CodeType.FILE }
+                    fileChunk?.content ?: ""
+                }
+                if (fileText.isNotEmpty()) {
+                    val fileLower = fileLowerCache.getOrPut(chunk.filePath) { fileText.lowercase() }
+                    val start = chunk.startOffset.coerceAtMost(fileText.length)
+                    val end = chunk.endOffset.coerceIn(start, fileText.length)
+                    if (start < end) {
+                        val sliceLower = fileLower.substring(start, end)
+                        return@filter sliceLower.contains(lower)
+                    }
+                }
+            }
+            false
+        }
+    }
+
+    private fun isSimpleToken(s: String): Boolean {
+        if (s.length < 3 || s.length > 64) return false
+        for (ch in s) if (!(ch.isLetterOrDigit() || ch == '_' || ch == '-')) return false
+        return true
+    }
+
+    private fun indexFileTokens(fileChunk: CodeChunk) {
+        val text = fileChunk.content
+        if (text.isEmpty()) return
+        var token = StringBuilder()
+        fun flush() {
+            if (token.isNotEmpty()) {
+                val t = token.toString().lowercase()
+                if (t.length >= 3 && t.length <= 64) {
+                    invertedIndex.computeIfAbsent(t) { mutableSetOf() }.add(fileChunk.id)
+                }
+                token = StringBuilder()
+            }
+        }
+        for (ch in text) {
+            if (ch.isLetterOrDigit() || ch == '_' || ch == '-') token.append(ch) else flush()
+        }
+        flush()
     }
     
     /**

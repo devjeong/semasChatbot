@@ -25,12 +25,15 @@ class BatchIndexingProcessor(
     private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "BatchIndexingProcessor").apply { isDaemon = true }
     }
+    private val fileIndexingPool = Executors.newFixedThreadPool(2) { r ->
+        Thread(r, "BatchIndexingWorker").apply { isDaemon = true }
+    }
     
     private val isProcessing = AtomicBoolean(false)
     private val batchSize = AtomicInteger(0)
-    private val maxBatchSize = 1
-    private val batchDelayMs = 1000L // 1초
-    private val maxConcurrentOperations = 3
+    private val maxBatchSize = 100
+    private val batchDelayMs = 400L // 0.4초
+    private val maxConcurrentOperations = 2
     
     private val activeOperations = AtomicInteger(0)
     private val performanceMetrics = PerformanceMetrics()
@@ -146,13 +149,19 @@ class BatchIndexingProcessor(
             }
         }
         
-        // 파일 재인덱싱 처리
-        reindexFiles.forEach { file ->
-            try {
-                reindexFile(file)
-            } catch (e: Exception) {
-                println("파일 재인덱싱 중 오류: ${file.path} - ${e.message}")
+        // 파일 재인덱싱 처리 (소규모 병렬화)
+        val futures = reindexFiles.map { file ->
+            fileIndexingPool.submit<Void> {
+                try {
+                    reindexFile(file)
+                } catch (e: Exception) {
+                    println("파일 재인덱싱 중 오류: ${file.path} - ${e.message}")
+                }
+                null
             }
+        }
+        futures.forEach { f ->
+            try { f.get() } catch (_: Exception) { }
         }
     }
     
@@ -289,6 +298,11 @@ class BatchIndexingProcessor(
             if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
                 executor.shutdownNow()
             }
+            // 워커 풀 종료
+            fileIndexingPool.shutdown()
+            if (!fileIndexingPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                fileIndexingPool.shutdownNow()
+            }
         } catch (e: Exception) {
             println("BatchIndexingProcessor 종료 중 오류: ${e.message}")
         }
@@ -299,37 +313,34 @@ class BatchIndexingProcessor(
  * 성능 메트릭을 수집하는 클래스입니다.
  */
 class PerformanceMetrics {
-    private val batchProcessingTimes = mutableListOf<Long>()
-    private val fileIndexingTimes = mutableListOf<Long>()
+    private val batchProcessingTimes = ArrayDeque<Long>()
+    private val fileIndexingTimes = ArrayDeque<Long>()
     private val totalBatches = AtomicInteger(0)
     private val totalFiles = AtomicInteger(0)
+    private var emaBatchMs = 0.0
+    private var emaFileMs = 0.0
+    private val alpha = 0.2 // EMA smoothing factor
     
     fun recordBatchProcessingTime(time: Long) {
-        batchProcessingTimes.add(time)
+        batchProcessingTimes.addLast(time)
+        while (batchProcessingTimes.size > 100) batchProcessingTimes.removeFirst()
         totalBatches.incrementAndGet()
-        
-        // 최대 100개까지만 유지
-        if (batchProcessingTimes.size > 100) {
-            batchProcessingTimes.removeAt(0)
-        }
+        emaBatchMs = if (emaBatchMs == 0.0) time.toDouble() else (alpha * time + (1 - alpha) * emaBatchMs)
     }
     
     fun recordFileIndexingTime(time: Long) {
-        fileIndexingTimes.add(time)
+        fileIndexingTimes.addLast(time)
+        while (fileIndexingTimes.size > 1000) fileIndexingTimes.removeFirst()
         totalFiles.incrementAndGet()
-        
-        // 최대 1000개까지만 유지
-        if (fileIndexingTimes.size > 1000) {
-            fileIndexingTimes.removeAt(0)
-        }
+        emaFileMs = if (emaFileMs == 0.0) time.toDouble() else (alpha * time + (1 - alpha) * emaFileMs)
     }
     
     fun getMetrics(): Map<String, Any> {
         return mapOf(
             "total_batches" to totalBatches.get().toInt(),
             "total_files" to totalFiles.get().toInt(),
-            "avg_batch_processing_time" to if (batchProcessingTimes.isNotEmpty()) batchProcessingTimes.average() else 0.0,
-            "avg_file_indexing_time" to if (fileIndexingTimes.isNotEmpty()) fileIndexingTimes.average() else 0.0,
+            "avg_batch_processing_time" to emaBatchMs,
+            "avg_file_indexing_time" to emaFileMs,
             "max_batch_processing_time" to (batchProcessingTimes.maxOrNull() ?: 0L),
             "max_file_indexing_time" to (fileIndexingTimes.maxOrNull() ?: 0L)
         )

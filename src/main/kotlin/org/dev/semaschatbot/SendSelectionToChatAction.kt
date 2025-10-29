@@ -6,6 +6,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.components.service
 import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.openapi.fileEditor.FileDocumentManager
 
 /**
  * `SendSelectionToChatAction`은 IntelliJ IDEA의 액션(Action) 클래스입니다.
@@ -28,7 +29,9 @@ class SendSelectionToChatAction : AnAction() {
         }
 
         val selectedText = editor.selectionModel.selectedText // 에디터에서 현재 선택된 텍스트를 가져옵니다.
-        val virtualFile = e.getData(CommonDataKeys.VIRTUAL_FILE) // 현재 파일의 VirtualFile 인스턴스를 가져옵니다.
+        // 현재 파일의 VirtualFile을 이벤트에서 우선 가져오고, 없으면 Document로부터 역추적합니다.
+        val virtualFile = e.getData(CommonDataKeys.VIRTUAL_FILE)
+            ?: FileDocumentManager.getInstance().getFile(editor.document)
 
         if (selectedText.isNullOrEmpty()) { // 선택된 텍스트가 없는 경우, 액션을 수행하지 않고 종료합니다.
             return
@@ -36,7 +39,7 @@ class SendSelectionToChatAction : AnAction() {
 
         val fileName = virtualFile?.name // 파일 이름을 가져옵니다.
         val lineNumber = editor.document.getLineNumber(editor.selectionModel.selectionStart) + 1 // 선택 시작 라인 번호를 가져옵니다 (0-based이므로 +1).
-        val fileInfo = if (fileName != null) "$fileName (라인: $lineNumber)" else null // 파일 정보 문자열을 생성합니다.
+        val fileInfo = fileName?.let { "$it (라인: $lineNumber)" } ?: "(라인: $lineNumber)" // 파일 정보 문자열을 생성합니다.
 
         val chatService = project.service<ChatService>() // ChatService 인스턴스를 가져옵니다.
 
@@ -44,11 +47,10 @@ class SendSelectionToChatAction : AnAction() {
 
         val toolWindow = toolWindowManager.getToolWindow("Protein26")
 
-        toolWindow?.activate(Runnable {
-            if (fileInfo != null) {
-                chatService.setSelectionContext(selectedText, fileInfo)
-            }
-        })
+        // 선택 컨텍스트를 즉시 설정하여 UI 활성화 여부와 무관하게 전달되도록 합니다.
+        chatService.setSelectionContext(selectedText, fileInfo)
+        // 가능하면 툴윈도를 전면으로 활성화합니다.
+        toolWindow?.activate(Runnable { })
     }
 
     /**

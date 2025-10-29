@@ -26,8 +26,10 @@ class FileHashService(private val project: Project) {
     private val hashMatchCount = AtomicLong(0)
     private val hashMismatchCount = AtomicLong(0)
     
-    // 해시 알고리즘
-    private val digest = MessageDigest.getInstance("SHA-256")
+    // 해시 알고리즘 (스레드 세이프하게 사용)
+    private val digestThreadLocal: ThreadLocal<MessageDigest> = ThreadLocal.withInitial {
+        MessageDigest.getInstance("SHA-256")
+    }
     
     /**
      * 파일이 재인덱싱이 필요한지 확인합니다.
@@ -85,14 +87,24 @@ class FileHashService(private val project: Project) {
      */
     private fun calculateFileHash(file: VirtualFile): String {
         return try {
-            val content = file.contentsToByteArray()
-            val hashBytes = digest.digest(content)
-            bytesToHex(hashBytes)
+            val md = digestThreadLocal.get()
+            md.reset()
+            file.inputStream.use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n <= 0) break
+                    md.update(buffer, 0, n)
+                }
+            }
+            bytesToHex(md.digest())
         } catch (e: Exception) {
             // 파일 읽기 실패 시 파일 경로와 크기를 기반으로 해시 생성
+            val md = digestThreadLocal.get()
+            md.reset()
             val fallbackContent = "${file.path}_${file.length}_${file.timeStamp}"
-            val hashBytes = digest.digest(fallbackContent.toByteArray())
-            bytesToHex(hashBytes)
+            md.update(fallbackContent.toByteArray())
+            bytesToHex(md.digest())
         }
     }
     
