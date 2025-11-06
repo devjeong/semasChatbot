@@ -368,23 +368,46 @@ class ChatService(private val project: Project) {
      * @param fileInfo 파일 정보
      */
     fun setSelectionContext(code: String, fileInfo: String) {
-        selectedCode = code
-        selectedFileInfo = fileInfo
-        
-        // 현재 선택 영역의 오프셋 정보도 저장
-        val editor = FileEditorManager.getInstance(project).selectedTextEditor
-        if (editor != null) {
-            val selectionModel = editor.selectionModel
-            if (selectionModel.hasSelection()) {
-                selectedStartOffset = selectionModel.selectionStart
-                selectedEndOffset = selectionModel.selectionEnd
-                selectedDocument = editor.document
+        try {
+            println("[ChatService] setSelectionContext 호출: 파일=$fileInfo, 코드 길이=${code.length}자")
+            
+            // 입력 검증
+            if (code.isBlank()) {
+                println("[ChatService] 경고: 선택된 코드가 비어있습니다.")
+                return
             }
-        }
-        
-        ApplicationManager.getApplication().invokeLater {
-            fileInfoLabel?.text = "선택된 파일: $fileInfo"
-            fileInfoLabel?.isVisible = true
+            
+            selectedCode = code
+            selectedFileInfo = fileInfo
+            
+            // 현재 선택 영역의 오프셋 정보도 저장
+            val editor = FileEditorManager.getInstance(project).selectedTextEditor
+            if (editor != null) {
+                val selectionModel = editor.selectionModel
+                if (selectionModel.hasSelection()) {
+                    selectedStartOffset = selectionModel.selectionStart
+                    selectedEndOffset = selectionModel.selectionEnd
+                    selectedDocument = editor.document
+                    println("[ChatService] 선택 오프셋 저장: $selectedStartOffset-$selectedEndOffset")
+                } else {
+                    // 선택 영역이 없어도 코드는 저장 (이전 선택 정보 유지)
+                    println("[ChatService] 현재 에디터에 선택 영역이 없지만 코드는 저장했습니다.")
+                }
+            } else {
+                println("[ChatService] 현재 활성 에디터가 없습니다.")
+            }
+            
+            ApplicationManager.getApplication().invokeLater {
+                fileInfoLabel?.text = "선택된 파일: $fileInfo"
+                fileInfoLabel?.isVisible = true
+                fileInfoLabel?.toolTipText = "선택된 코드: ${code.take(100)}..."
+            }
+            
+            println("[ChatService] 선택 컨텍스트 설정 완료")
+            
+        } catch (e: Exception) {
+            println("[ChatService] setSelectionContext 오류: ${e.message}")
+            e.printStackTrace()
         }
     }
 
@@ -623,7 +646,7 @@ class ChatService(private val project: Project) {
                 publish("🔍 프로젝트 파일을 스캔하고 있습니다...")
                 Thread.sleep(500) // UI 업데이트를 위한 짧은 지연
                 
-                publish("📂 지원되는 파일 확장자: java, kt, js, ts, vue, sql, xml, yml, yaml, json")
+                publish("📂 지원되는 파일 확장자: java, kt, js, ts, vue, sql, xml, yml, yaml, json, css")
                 Thread.sleep(500)
                 
                 publish("⚙️ PSI 트리를 분석하여 코드 구조를 파악합니다...")
@@ -980,9 +1003,16 @@ class ChatService(private val project: Project) {
     }
 
     /**
-     * 사용자 입력 유형을 분류합니다. (일반질문, RAG질문, 신규작성)
+     * 사용자 입력 유형을 분류합니다.
      */
-    private enum class UserInputType { GENERAL_QUESTION,RAG_QUESTION, NEW_SOURCE }
+    private enum class UserInputType { 
+        GENERAL_QUESTION,  // 일반 질문
+        RAG_QUESTION,      // RAG 기반 질문
+        NEW_SOURCE,        // 신규 소스 작성
+        INSTRUCTION,       // 코드 수정/개선 지시
+        CURSOR_CODE_GENERATION,  // 커서 위치 코드 생성
+        EXTERNAL_FILE_EDIT       // 외부 파일 수정
+    }
 
     /**
      * 선택된 코드가 전체 파일인지 확인합니다.
@@ -1009,15 +1039,33 @@ class ChatService(private val project: Project) {
         val fileContext = selectedFileInfo
         val editor = FileEditorManager.getInstance(project).selectedTextEditor
 
+        // 디버깅: 선택된 코드 상태 확인
+        println("[ChatService] sendChatRequestToLLM 호출")
+        println("[ChatService] selectedCode 상태: ${if (codeContext != null) "있음 (${codeContext.length}자)" else "없음"}")
+        println("[ChatService] selectedFileInfo: $fileContext")
+        println("[ChatService] 사용자 입력: ${userInput.take(100)}...")
+
         sendMessage(userInput, isUser = true)
 
         val inputType = classifyInput(userInput)
+        println("[ChatService] 입력 타입 분류: $inputType")
         val prompt = when {
             inputType == UserInputType.RAG_QUESTION -> {
                 // RAG 기반 질문 처리
                 val relevantChunks = searchRelevantCode(userInput, 5)
-                val contextCode = if (relevantChunks.isNotEmpty()) {
-                    buildString {
+                val contextCode = buildString {
+                    // 선택된 코드가 있으면 먼저 포함
+                    if (codeContext != null) {
+                        appendLine("=== 사용자가 선택한 코드 (파일: $fileContext) ===")
+                        appendLine("```")
+                        appendLine(codeContext.take(2000)) // 선택된 코드는 최대 2000자까지
+                        if (codeContext.length > 2000) appendLine("... (코드가 길어서 일부만 표시)")
+                        appendLine("```")
+                        appendLine()
+                    }
+                    
+                    // 관련 코드 조각들 추가
+                    if (relevantChunks.isNotEmpty()) {
                         appendLine("다음은 질문과 관련된 프로젝트 코드입니다:")
                         appendLine()
                         relevantChunks.forEachIndexed { index, chunk ->
@@ -1031,9 +1079,11 @@ class ChatService(private val project: Project) {
                             appendLine("```")
                             appendLine()
                         }
+                    } else {
+                        if (codeContext == null) {
+                            append("관련 코드를 찾을 수 없습니다.")
+                        }
                     }
-                } else {
-                    "관련 코드를 찾을 수 없습니다."
                 }
                 
                 """
@@ -1064,8 +1114,19 @@ class ChatService(private val project: Project) {
             inputType == UserInputType.NEW_SOURCE -> {
                 // 신규 소스 작성
                 val relevantChunks = searchRelevantCode(userInput, 5)
-                val contextCode = if (relevantChunks.isNotEmpty()) {
-                    buildString {
+                val contextCode = buildString {
+                    // 선택된 코드가 있으면 먼저 포함
+                    if (codeContext != null) {
+                        appendLine("=== 사용자가 선택한 참조 코드 (파일: $fileContext) ===")
+                        appendLine("```")
+                        appendLine(codeContext.take(2000))
+                        if (codeContext.length > 2000) appendLine("... (코드가 길어서 일부만 표시)")
+                        appendLine("```")
+                        appendLine()
+                    }
+                    
+                    // 관련 코드 조각들 추가
+                    if (relevantChunks.isNotEmpty()) {
                         appendLine("다음은 질문과 관련된 프로젝트 코드입니다:")
                         appendLine()
                         relevantChunks.forEachIndexed { index, chunk ->
@@ -1079,9 +1140,11 @@ class ChatService(private val project: Project) {
                             appendLine("```")
                             appendLine()
                         }
+                    } else {
+                        if (codeContext == null) {
+                            append("관련 코드를 찾을 수 없습니다.")
+                        }
                     }
-                } else {
-                    "관련 코드를 찾을 수 없습니다."
                 }
 
                 """
@@ -1109,11 +1172,61 @@ class ChatService(private val project: Project) {
                 사용자 질문: $userInput
                 """.trimIndent()
             }
+            inputType == UserInputType.INSTRUCTION -> {
+                // 코드 수정/개선 지시 처리
+                if (codeContext == null) {
+                    sendMessage("❌ 수정할 코드가 선택되지 않았습니다. 먼저 'Send Selection to Chat'으로 코드를 선택해주세요.", isUser = false)
+                    return
+                }
+                
+                println("[ChatService] INSTRUCTION 타입 처리: 선택된 코드 길이=${codeContext.length}자, 파일=$fileContext")
+                
+                // 선택된 코드를 명확하게 포함하는 프롬프트 생성
+                """
+                사용자가 선택한 코드를 수정/개선해달라고 요청했습니다.
+
+                선택된 코드 (파일: $fileContext):
+                ```
+                $codeContext
+                ```
+
+                사용자 요청: $userInput
+
+                아래 지시사항을 따라 수정된 코드를 제공하세요:
+
+                1. 원본 코드를 분석하고 사용자의 요청을 이해하세요.
+                2. 수정된 코드를 다음 형식으로 제공하세요:
+                   [Modified]
+                   ```코드언어
+                   수정된 코드 전체
+                   ```
+                3. 코드 블록 내에 수정된 코드만 포함하고, 설명이나 주석은 코드 블록 밖에 작성하세요.
+                4. 사용자의 요청을 정확히 반영하여 코드를 수정하세요.
+                5. 코드 스타일과 구조는 원본과 일관성을 유지하세요.
+                6. 한국어로 설명을 제공하세요.
+
+                주의사항:
+                - 반드시 [Modified] 태그로 시작해야 합니다.
+                - 수정된 코드는 코드 블록(```) 안에 포함되어야 합니다.
+                - 원본 코드의 컨텍스트를 유지하면서 요청된 변경사항만 적용하세요.
+                """.trimIndent()
+            }
             else -> {
                 // 그 외의 경우, 일반적인 프롬프트 사용 - RAG 기반으로 관련 코드 참조
                 val relevantChunks = searchRelevantCode(userInput, 4)
-                val contextCode = if (relevantChunks.isNotEmpty()) {
-                    buildString {
+                val contextCode = buildString {
+                    // 선택된 코드가 있으면 먼저 포함
+                    if (codeContext != null) {
+                        appendLine("=== 사용자가 선택한 코드 (파일: $fileContext) ===")
+                        appendLine("```")
+                        appendLine(codeContext.take(2000))
+                        if (codeContext.length > 2000) appendLine("... (코드가 길어서 일부만 표시)")
+                        appendLine("```")
+                        appendLine()
+                    }
+                    
+                    // 관련 코드 조각들 추가
+                    if (relevantChunks.isNotEmpty()) {
                         appendLine("다음은 질문과 관련된 프로젝트 코드 참조:")
                         appendLine()
                         relevantChunks.forEachIndexed { index, chunk ->
@@ -1127,32 +1240,11 @@ class ChatService(private val project: Project) {
                             appendLine("```")
                             appendLine()
                         }
-                    }
-                } else {
-                    if (codeContext != null) {
-                        "선택된 코드 컨텍스트를 기반으로 답변합니다."
                     } else {
-                        "관련된 프로젝트 코드를 찾을 수 없어 일반적인 지식을 기반으로 답변합니다."
+                        if (codeContext == null) {
+                            append("관련된 프로젝트 코드를 찾을 수 없어 일반적인 지식을 기반으로 답변합니다.")
+                        }
                     }
-                }
-                
-                val basePrompt = if (codeContext != null) {
-                    """
-                    $contextCode
-                    
-                    User selected code from $fileContext: 
-                    ```
-                    $codeContext
-                    ```
-                    
-                    User query: $userInput
-                    """
-                } else {
-                    """
-                    $contextCode
-                    
-                    User query: $userInput
-                    """
                 }
                 
                 """
@@ -1175,9 +1267,20 @@ class ChatService(private val project: Project) {
                 - 템플릿 외의 여분 텍스트는 출력하지 않습니다.
 
                 컨텍스트:
-                $basePrompt
+                $contextCode
+
+                사용자 질문: $userInput
                 """.trimIndent()
             }
+        }
+
+        // 디버깅: 생성된 프롬프트 확인 (처음 500자만)
+        println("[ChatService] 생성된 프롬프트 (처음 500자):")
+        println(prompt.take(500))
+        println("[ChatService] 프롬프트 전체 길이: ${prompt.length}자")
+        if (codeContext != null) {
+            val codeIncluded = prompt.contains(codeContext.take(100))
+            println("[ChatService] 선택된 코드가 프롬프트에 포함되어 있는지: $codeIncluded")
         }
 
         ApplicationManager.getApplication().invokeLater { loadingIndicator?.isVisible = true }
@@ -1185,6 +1288,7 @@ class ChatService(private val project: Project) {
         // 스트리밍 모드: 첫 델타가 도착하면 패널을 생성하고, 이후 델타는 누적 업데이트합니다.
         val initialPanelRef = arrayOfNulls<JPanel>(1)
         val initialTextAreaRef = arrayOfNulls<JTextArea>(1)
+        val accumulatedResponse = StringBuilder()
 
         apiClient.sendChatRequestStream(
             userMessage = prompt,
@@ -1192,6 +1296,9 @@ class ChatService(private val project: Project) {
             modelId = selectedModelId,
             onDelta = { delta ->
                 ApplicationManager.getApplication().invokeLater {
+                    // 응답 누적
+                    accumulatedResponse.append(delta)
+                    
                     val existingPanel = initialPanelRef[0]
                     val existingText = initialTextAreaRef[0]
                     if (existingPanel == null || existingText == null) {
@@ -1224,6 +1331,14 @@ class ChatService(private val project: Project) {
             onComplete = {
                 ApplicationManager.getApplication().invokeLater {
                     loadingIndicator?.isVisible = false
+                    
+                    // INSTRUCTION 타입인 경우 응답을 파싱하여 처리
+                    if (inputType == UserInputType.INSTRUCTION && editor != null) {
+                        val fullResponse = accumulatedResponse.toString()
+                        println("[ChatService] INSTRUCTION 응답 완료, 파싱 시작: ${fullResponse.take(200)}...")
+                        handleInstructionResponse(fullResponse, editor)
+                    }
+                    
                     // 선택 컨텍스트는 유지하여 적용 버튼에서 사용할 수 있도록 함
                     clearCursorContext()
                 }
@@ -1525,13 +1640,22 @@ class ChatService(private val project: Project) {
                 modifiedCode = codeBlockMatcher.group(1).trim()
             }
             
-            val originalCode = selectedCode ?: return  // 로컬 선택 영역 사용
+            val originalCode = selectedCode ?: run {
+                println("[ChatService] handleInstructionResponse: selectedCode가 null입니다.")
+                sendMessage("❌ 원본 선택 영역 정보가 없습니다. 'Send Selection to Chat'으로 선택한 코드에만 적용할 수 있습니다.", isUser = false)
+                return
+            }
+            
+            println("[ChatService] handleInstructionResponse: 원본 코드 길이=${originalCode.length}자, 수정된 코드 길이=${modifiedCode.length}자")
 
-            val fileText = document.text
-            val startOffset = fileText.indexOf(originalCode)
-            if (startOffset != -1) {
-                val endOffset = startOffset + originalCode.length
-
+            // 저장된 오프셋 정보 우선 사용, 없으면 파일에서 찾기
+            val startOffset = selectedStartOffset
+            val endOffset = selectedEndOffset
+            
+            if (startOffset != null && endOffset != null && selectedDocument == document) {
+                // 저장된 오프셋 사용
+                println("[ChatService] handleInstructionResponse: 저장된 오프셋 사용: $startOffset-$endOffset")
+                
                 val change = PendingChange(originalCode, modifiedCode, document, startOffset, endOffset)
                 pendingChanges.add(change)
 
@@ -1549,10 +1673,33 @@ class ChatService(private val project: Project) {
                     // 새 diff 창 띄우기 (선택 영역만 비교, 버튼 포함)
                     showDiffWindow(originalCode, modifiedCode, change)
                 }
-                sendMessage("코드 수정 제안을 받았습니다. diff 창에서 확인 후 '적용' 또는 '거절'을 선택해주세요.", isUser = false)
+                sendMessage("✅ 코드 수정 제안을 받았습니다. diff 창에서 확인 후 '적용' 또는 '거절'을 선택해주세요.", isUser = false)
             } else {
-                sendMessage("원본 코드를 현재 파일에서 찾을 수 없습니다. LLM이 코드를 일부 변경하여 응답했을 수 있습니다.", isUser = false)
-                sendMessage("LLM 응답:\n$modifiedCode", isUser = false)
+                // 파일에서 찾기 (fallback)
+                val fileText = document.text
+                val foundOffset = fileText.indexOf(originalCode)
+                if (foundOffset != -1) {
+                    println("[ChatService] handleInstructionResponse: 파일에서 코드 찾음: $foundOffset")
+                    val foundEndOffset = foundOffset + originalCode.length
+                    
+                    val change = PendingChange(originalCode, modifiedCode, document, foundOffset, foundEndOffset)
+                    pendingChanges.add(change)
+
+                    ApplicationManager.getApplication().invokeLater {
+                        PsiDocumentManager.getInstance(project).commitDocument(document)
+                        addHighlight(editor, foundOffset, foundEndOffset)
+                        val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(document)
+                        if (psiFile != null) {
+                            DaemonCodeAnalyzerEx.getInstanceEx(project).restart()
+                        }
+                        showDiffWindow(originalCode, modifiedCode, change)
+                    }
+                    sendMessage("✅ 코드 수정 제안을 받았습니다. diff 창에서 확인 후 '적용' 또는 '거절'을 선택해주세요.", isUser = false)
+                } else {
+                    println("[ChatService] handleInstructionResponse: 원본 코드를 파일에서 찾을 수 없음")
+                    sendMessage("❌ 원본 코드를 현재 파일에서 찾을 수 없습니다. 파일이 변경되었거나 코드가 정확히 일치하지 않습니다.", isUser = false)
+                    sendMessage("💡 수정된 코드:\n```\n$modifiedCode\n```", isUser = false)
+                }
             }
         } else {
             sendMessage("수정 제안을 파싱할 수 없습니다. 받은 응답:\n$response", isUser = false)
