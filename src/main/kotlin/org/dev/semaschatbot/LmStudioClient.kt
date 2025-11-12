@@ -70,22 +70,41 @@ class LmStudioClient(
     
     /**
      * LM Studio API에 채팅 요청을 보내고 응답을 반환합니다.
+     * 호환성을 위해 기존 메서드 유지 (내부적으로 sendChatRequestWithStats 호출)
+     * 
      * @param userMessage 사용자 입력 메시지
+     * @param systemMessage 시스템 프롬프트
      * @param modelId 사용할 LLM 모델의 ID (기본값: "default-model")
      * @return LLM 응답 문자열 또는 오류 발생 시 null
      */
     fun sendChatRequest(userMessage: String, systemMessage: String, modelId: String = "default-model"): String? {
+        return sendChatRequestWithStats(userMessage, systemMessage, modelId)?.content
+    }
+    
+    /**
+     * LM Studio API에 채팅 요청을 보내고 응답과 통계 정보를 반환합니다.
+     * 
+     * @param userMessage 사용자 입력 메시지
+     * @param systemMessage 시스템 프롬프트
+     * @param modelId 사용할 LLM 모델의 ID (기본값: "default-model")
+     * @return LmStudioResponse 객체 (토큰 정보 포함) 또는 오류 발생 시 null
+     */
+    fun sendChatRequestWithStats(userMessage: String, systemMessage: String, modelId: String = "default-model"): LmStudioResponse? {
+        val startTime = System.currentTimeMillis()
+        
         val messages = listOf(
             mapOf("role" to "system", "content" to systemMessage),
             mapOf("role" to "user", "content" to userMessage)
         )
+        
         // API 요청 본문을 위한 맵을 생성합니다. 모델 ID, 메시지, temperature 등을 포함합니다.
         val requestBodyMap = mapOf(
             "model" to modelId,
             "messages" to messages,
             "temperature" to 0.7
         )
-    // 맵을 JSON 문자열로 변환하여 요청 본문으로 사용합니다.
+        
+        // 맵을 JSON 문자열로 변환하여 요청 본문으로 사용합니다.
         val requestBodyJson = gson.toJson(requestBodyMap)
 
         // HTTP 요청 객체를 생성합니다. POST 메서드와 JSON 본문을 사용합니다.
@@ -100,23 +119,54 @@ class LmStudioClient(
                 if (!response.isSuccessful) { // 응답이 성공적이지 않은 경우 예외 발생
                     throw IOException("Unexpected code ${response.code}")
                 }
+                
                 // 응답 본문을 문자열로 읽어오거나, 없으면 null 반환
                 val responseBody = response.body?.string() ?: return null
+                
                 // JSON 응답을 파싱하여 JsonObject로 변환
                 val jsonResponse = gson.fromJson(responseBody, JsonObject::class.java)
-                // "choices" 배열에서 첫 번째 메시지의 "content"를 추출하여 반환
+                
+                // "choices" 배열에서 첫 번째 메시지의 "content"를 추출
                 val choices = jsonResponse.getAsJsonArray("choices")
-                if (choices.size() > 0) {
-                    val message = choices.get(0).asJsonObject.getAsJsonObject("message")
-                    return message.get("content").asString
+                if (choices.size() == 0) {
+                    return null
                 }
-                return null // "choices"가 비어있으면 null 반환
+                
+                val message = choices.get(0).asJsonObject.getAsJsonObject("message")
+                val content = message.get("content").asString
+                
+                // usage 정보 추출
+                val usage = jsonResponse.getAsJsonObject("usage")?.let {
+                    try {
+                        LmStudioUsage(
+                            promptTokens = it.get("prompt_tokens")?.asInt ?: 0,
+                            completionTokens = it.get("completion_tokens")?.asInt ?: 0,
+                            totalTokens = it.get("total_tokens")?.asInt ?: 0
+                        )
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                
+                val responseTime = System.currentTimeMillis() - startTime
+                
+                return LmStudioResponse(
+                    content = content,
+                    usage = usage,
+                    modelId = modelId
+                )
             }
         } catch (e: IOException) { // 네트워크 또는 I/O 오류 처리
-            println("API 호출 오류: ${e.message}")
+            println("[LmStudioClient] API 호출 오류: ${e.message}")
+            e.printStackTrace()
             return null
         } catch (e: JsonSyntaxException) { // JSON 파싱 오류 처리
-            println("JSON 파싱 오류: ${e.message}")
+            println("[LmStudioClient] JSON 파싱 오류: ${e.message}")
+            e.printStackTrace()
+            return null
+        } catch (e: Exception) {
+            println("[LmStudioClient] 예상치 못한 오류: ${e.message}")
+            e.printStackTrace()
             return null
         }
     }

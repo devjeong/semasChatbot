@@ -176,6 +176,7 @@ class ChatService(private val project: Project) {
 
     private val apiClient = LmStudioClient()
     private val geminiClient = GeminiClient()
+    private val lmStudioStatsApiClient = LmStudioStatsApiClient()
     // 실시간 인덱싱 서비스의 CodeIndexingService 인스턴스 사용
     private val realTimeIndexingService = project.getService(RealTimeIndexingService::class.java)
     private val codeIndexingService: CodeIndexingService
@@ -1649,6 +1650,22 @@ class ChatService(private val project: Project) {
                     val estimatedOutputTokens = responseText.length / 4
                     userService.recordApiCall(true, responseTime)
                     userService.recordTokens(estimatedInputTokens, estimatedOutputTokens)
+                    
+                    // LM Studio 통계 전송 (비동기)
+                    val currentUserId = try {
+                        userService.getCurrentUser()?.id
+                    } catch (e: Exception) {
+                        null
+                    }
+                    val stats = LmStudioStats(
+                        userId = currentUserId,
+                        modelId = selectedModelId,
+                        inputTokens = estimatedInputTokens,
+                        outputTokens = estimatedOutputTokens,
+                        totalTokens = estimatedInputTokens + estimatedOutputTokens,
+                        responseTime = responseTime
+                    )
+                    lmStudioStatsApiClient.sendStatsAsync(stats)
                     
                     // INSTRUCTION 타입인 경우 응답을 파싱하여 처리
                     if (inputType == UserInputType.INSTRUCTION && editor != null) {
@@ -4758,12 +4775,32 @@ button:hover {
                         userId = currentUserId
                     ) ?: "오류: Gemini API 응답이 null입니다."
                 } else {
-                    // LM Studio API 호출
-                    apiClient.sendChatRequest(
+                    // LM Studio API 호출 (통계 정보 포함)
+                    val startTime = System.currentTimeMillis()
+                    val lmResponse = apiClient.sendChatRequestWithStats(
                         userMessage = prompt,
                         systemMessage = systemMessage,
                         modelId = modelId
-                    ) ?: "오류: LM Studio API 응답이 null입니다."
+                    )
+                    
+                    if (lmResponse != null) {
+                        val responseTime = System.currentTimeMillis() - startTime
+                        
+                        // 통계 정보 생성 및 전송 (비동기)
+                        val stats = LmStudioStats(
+                            userId = currentUserId,
+                            modelId = modelId,
+                            inputTokens = lmResponse.usage?.promptTokens ?: (prompt.length / 4),
+                            outputTokens = lmResponse.usage?.completionTokens ?: (lmResponse.content.length / 4),
+                            totalTokens = lmResponse.usage?.totalTokens ?: ((prompt.length + lmResponse.content.length) / 4),
+                            responseTime = responseTime
+                        )
+                        lmStudioStatsApiClient.sendStatsAsync(stats)
+                        
+                        lmResponse.content
+                    } else {
+                        "오류: LM Studio API 응답이 null입니다."
+                    }
                 }
                 
                 ApplicationManager.getApplication().invokeLater {
