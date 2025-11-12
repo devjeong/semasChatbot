@@ -10,6 +10,9 @@ import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.content.ContentFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.awt.*
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
@@ -145,8 +148,15 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val modelLabel = JLabel("모델:")
         modelLabel.font = Font("SansSerif", Font.BOLD, 11)
         modelLabel.foreground = Color(80, 80, 80)
-        val modelCombo = createStyledComboBox(arrayOf("default-model"))
-        modelCombo.toolTipText = "LM Studio 모델 선택"
+        // Gemini 모델과 로컬 모델을 함께 표시
+        val initialModels = mutableListOf<String>()
+        initialModels.add("default-model") // 기본 로컬 모델
+        initialModels.add("💎 gemini-1.5-flash") // Gemini 모델들
+        initialModels.add("💎 gemini-1.5-pro")
+        initialModels.add("💎 gemini-2.0-flash-exp")
+        initialModels.add("💎 gemini-2.5-flash")
+        val modelCombo = createStyledComboBox(initialModels.toTypedArray())
+        modelCombo.toolTipText = "모델 선택 (Gemini 또는 LM Studio)"
         bottomButtonPanel.add(modelLabel)
         bottomButtonPanel.add(modelCombo)
         bottomButtonPanel.add(resetButton) // 초기화 버튼을 먼저 추가
@@ -510,23 +520,128 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             } else {
                 chatService.sendMessage("안녕하세요! Protein 26 입니다. 무엇을 도와드릴까요?", isUser = false)
             }
-            // LM Studio 모델 목록 로드 (백그라운드)
+            // LM Studio 모델 목록 로드 (백그라운드) - Gemini 모델은 유지
             ApplicationManager.getApplication().executeOnPooledThread {
                 try {
-                    val models = chatService.listLmStudioModels()
-                    if (models.isNotEmpty()) {
+                    val lmModels = chatService.listLmStudioModels()
+                    if (lmModels.isNotEmpty()) {
                         javax.swing.SwingUtilities.invokeLater {
-                            modelCombo.model = DefaultComboBoxModel(models.toTypedArray())
-                            chatService.setSelectedModel(models.first())
+                            // 기존 Gemini 모델 목록 유지
+                            val geminiModels = listOf(
+                                "💎 gemini-1.5-flash",
+                                "💎 gemini-1.5-pro",
+                                "💎 gemini-2.0-flash-exp",
+                                "💎 gemini-2.5-flash"
+                            )
+                            // Gemini 모델과 LM Studio 모델을 합침
+                            val allModels = mutableListOf<String>()
+                            allModels.add("default-model")
+                            allModels.addAll(geminiModels)
+                            allModels.addAll(lmModels)
+                            modelCombo.model = DefaultComboBoxModel(allModels.toTypedArray())
+                            // 기본 모델 선택
+                            chatService.setSelectedModel("default-model")
                         }
                     }
                 } catch (_: Exception) {}
             }
         }
 
-        // 콤보박스 선택 변경 시 ChatService에 반영
+        // 콤보박스 선택 변경 시 ChatService에 반영 및 Gemini 모델 선택 시 API Key 확인
         modelCombo.addActionListener {
-            (modelCombo.selectedItem as? String)?.let { chatService.setSelectedModel(it) }
+            val selectedModel = modelCombo.selectedItem as? String ?: return@addActionListener
+            
+            // Gemini 모델인지 확인 (💎 이모지로 시작하는 모델)
+            if (selectedModel.startsWith("💎")) {
+                val geminiModelId = selectedModel.removePrefix("💎 ").trim()
+                val geminiApiKey = chatService.getGeminiApiKey()
+                
+                // API Key가 없으면 설정 다이얼로그 표시
+                if (geminiApiKey.isBlank()) {
+                    showGeminiApiKeyDialog(panel, chatService, geminiModelId) { apiKey ->
+                        if (apiKey.isNotBlank()) {
+                            chatService.setGeminiApiKey(apiKey)
+                            chatService.setSelectedModel(selectedModel)
+                            chatService.sendMessage("Gemini 모델 '$geminiModelId'이 선택되었습니다.", isUser = false)
+                        } else {
+                            // API Key를 입력하지 않으면 기본 모델로 되돌림
+                            modelCombo.selectedItem = "default-model"
+                            chatService.setSelectedModel("default-model")
+                        }
+                    }
+                } else {
+                    chatService.setSelectedModel(selectedModel)
+                    chatService.sendMessage("Gemini 모델 '$geminiModelId'이 선택되었습니다.", isUser = false)
+                }
+            } else {
+                // 로컬 모델 선택 시
+                chatService.setSelectedModel(selectedModel)
+            }
+        }
+    }
+    
+    /**
+     * Gemini API Key 설정 다이얼로그를 표시합니다.
+     */
+    private fun showGeminiApiKeyDialog(
+        parentComponent: JPanel,
+        chatService: ChatService,
+        modelId: String,
+        onComplete: (String) -> Unit
+    ) {
+        val geminiApiKey = chatService.getGeminiApiKey()
+        
+        // Gemini 설정 패널 생성
+        val geminiPanel = JPanel()
+        geminiPanel.layout = BoxLayout(geminiPanel, BoxLayout.Y_AXIS)
+        geminiPanel.border = EmptyBorder(10, 10, 10, 10)
+        
+        // 설명 레이블
+        val descriptionLabel = JLabel("<html>Gemini 모델 '$modelId'을 사용하려면 API Key가 필요합니다.<br><br>Gemini API Key를 입력해주세요:</html>")
+        descriptionLabel.font = Font("SansSerif", Font.PLAIN, 12)
+        
+        // API Key 입력 필드
+        val apiKeyLabel = JLabel("Gemini API Key:")
+        val apiKeyField = JPasswordField(40)
+        apiKeyField.text = geminiApiKey
+        
+        // 설명 레이블
+        val helpLabel = JLabel("<html>Gemini API Key는 Google AI Studio에서 발급받을 수 있습니다.<br>https://makersuite.google.com/app/apikey</html>")
+        helpLabel.font = Font("SansSerif", Font.PLAIN, 11)
+        helpLabel.foreground = Color.GRAY
+        
+        geminiPanel.add(descriptionLabel)
+        geminiPanel.add(Box.createVerticalStrut(10))
+        geminiPanel.add(apiKeyLabel)
+        geminiPanel.add(apiKeyField)
+        geminiPanel.add(Box.createVerticalStrut(5))
+        geminiPanel.add(helpLabel)
+        
+        // 다이얼로그 표시
+        val result = JOptionPane.showConfirmDialog(
+            parentComponent,
+            geminiPanel,
+            "Gemini API Key 입력",
+            JOptionPane.OK_CANCEL_OPTION,
+            JOptionPane.PLAIN_MESSAGE
+        )
+        
+        // 사용자가 OK를 눌렀을 경우
+        if (result == JOptionPane.OK_OPTION) {
+            val apiKey = String(apiKeyField.password).trim()
+            if (apiKey.isBlank()) {
+                JOptionPane.showMessageDialog(
+                    parentComponent,
+                    "API Key를 입력해주세요.",
+                    "입력 오류",
+                    JOptionPane.WARNING_MESSAGE
+                )
+                onComplete("")
+            } else {
+                onComplete(apiKey)
+            }
+        } else {
+            onComplete("")
         }
     }
 
@@ -961,107 +1076,302 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
     }
 
     /**
-     * 인증 다이얼로그를 표시하고 사용자 인증을 처리합니다.
+     * 회원가입/로그인 다이얼로그를 표시하고 사용자 인증을 처리합니다.
      * @param chatService 챗 서비스 인스턴스
      * @param parentComponent 부모 컴포넌트 (다이얼로그의 위치 기준)
      */
     private fun showAuthenticationDialog(chatService: ChatService, parentComponent: JPanel) {
+        val userService = chatService.getUserService()
         var authAttempts = 0
         val maxAttempts = 3
 
-        fun attemptAuthentication() {
-            authAttempts++
+        fun showLoginOrRegisterDialog() {
+            // 탭 패널 생성 (로그인/회원가입)
+            val tabbedPane = JTabbedPane()
             
-            // 인증키 입력을 위한 JPasswordField 생성
-            val passwordField = JPasswordField(20)
-            passwordField.font = Font("Monospaced", Font.PLAIN, 12)
-
-            // 설명 레이블 생성
-            val descriptionLabel = JLabel("소진공 AI 챗봇을 사용하려면 인증키를 입력하세요:")
-            descriptionLabel.font = Font("SansSerif", Font.PLAIN, 12)
-
-            // 시도 횟수 표시 레이블
-            val attemptsLabel = JLabel("시도 횟수: $authAttempts / $maxAttempts")
-            attemptsLabel.font = Font("SansSerif", Font.ITALIC, 11)
-            attemptsLabel.foreground = if (authAttempts >= 2) Color.RED else Color.GRAY
-
-            // 보안 아이콘 레이블
-            val securityLabel = JLabel("🔐")
-            securityLabel.font = Font("SansSerif", Font.PLAIN, 20)
-
-            // 패널 구성
-            val authPanel = JPanel()
-            authPanel.layout = BoxLayout(authPanel, BoxLayout.Y_AXIS)
-            authPanel.add(Box.createVerticalStrut(5))
+            // === 로그인 탭 ===
+            val loginPanel = JPanel()
+            loginPanel.layout = BoxLayout(loginPanel, BoxLayout.Y_AXIS)
             
-            val iconPanel = JPanel(FlowLayout(FlowLayout.CENTER))
-            iconPanel.add(securityLabel)
-            authPanel.add(iconPanel)
+            // 입력 필드 크기 최적화: 컬럼 수를 20에서 12로 축소하여 더 컴팩트한 UI 제공
+            val loginUsernameField = JTextField(12)
+            val loginPasswordField = JPasswordField(12)
             
-            authPanel.add(Box.createVerticalStrut(10))
-            authPanel.add(descriptionLabel)
-            authPanel.add(Box.createVerticalStrut(10))
-            authPanel.add(passwordField)
-            authPanel.add(Box.createVerticalStrut(5))
-            authPanel.add(attemptsLabel)
-
-            // 포커스를 패스워드 필드로 설정
-            passwordField.requestFocusInWindow()
-
-            // JOptionPane을 사용하여 다이얼로그 표시
+            // 입력 필드 최대 크기 제한으로 레이아웃 일관성 유지
+            loginUsernameField.maximumSize = Dimension(200, 30)
+            loginPasswordField.maximumSize = Dimension(200, 30)
+            
+            loginPanel.add(Box.createVerticalStrut(10))
+            loginPanel.add(JLabel("아이디:"))
+            loginPanel.add(loginUsernameField)
+            loginPanel.add(Box.createVerticalStrut(10))
+            loginPanel.add(JLabel("비밀번호:"))
+            loginPanel.add(loginPasswordField)
+            loginPanel.add(Box.createVerticalStrut(10))
+            
+            tabbedPane.addTab("로그인", loginPanel)
+            
+            // === 회원가입 탭 ===
+            val registerPanel = JPanel()
+            registerPanel.layout = BoxLayout(registerPanel, BoxLayout.Y_AXIS)
+            
+            // 회원가입 입력 필드도 로그인 탭과 동일한 크기로 일관성 유지
+            val registerNameField = JTextField(12)
+            val registerUsernameField = JTextField(12)
+            val registerPasswordField = JPasswordField(12)
+            val registerPasswordConfirmField = JPasswordField(12)
+            val roleComboBox = JComboBox<UserRole>(UserRole.values())
+            
+            // 모든 입력 필드에 최대 크기 제한 적용
+            registerNameField.maximumSize = Dimension(200, 30)
+            registerUsernameField.maximumSize = Dimension(200, 30)
+            registerPasswordField.maximumSize = Dimension(200, 30)
+            registerPasswordConfirmField.maximumSize = Dimension(200, 30)
+            roleComboBox.maximumSize = Dimension(200, 30)
+            
+            registerPanel.add(Box.createVerticalStrut(10))
+            registerPanel.add(JLabel("이름:"))
+            registerPanel.add(registerNameField)
+            registerPanel.add(Box.createVerticalStrut(10))
+            registerPanel.add(JLabel("아이디 (최소 3자):"))
+            registerPanel.add(registerUsernameField)
+            registerPanel.add(Box.createVerticalStrut(10))
+            registerPanel.add(JLabel("비밀번호 (최소 4자):"))
+            registerPanel.add(registerPasswordField)
+            registerPanel.add(Box.createVerticalStrut(10))
+            registerPanel.add(JLabel("비밀번호 확인:"))
+            registerPanel.add(registerPasswordConfirmField)
+            registerPanel.add(Box.createVerticalStrut(10))
+            registerPanel.add(JLabel("권한:"))
+            registerPanel.add(roleComboBox)
+            registerPanel.add(Box.createVerticalStrut(10))
+            
+            tabbedPane.addTab("회원가입", registerPanel)
+            
+            // 다이얼로그 표시
             val result = JOptionPane.showConfirmDialog(
                 parentComponent,
-                authPanel,
-                "SEMAS 챗봇 인증",
+                tabbedPane,
+                "SEMAS 챗봇 - 로그인/회원가입",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.PLAIN_MESSAGE
             )
-
-            // 사용자가 OK를 눌렀을 경우
+            
             if (result == JOptionPane.OK_OPTION) {
-                val inputKey = String(passwordField.password)
+                val selectedTab = tabbedPane.selectedIndex
                 
-                if (chatService.authenticateUser(inputKey)) {
-                    // 인증 성공
-                    chatService.sendMessage("✅ 인증이 완료되었습니다. 환영합니다!", isUser = false)
-                    chatService.sendMessage("안녕하세요! 소진공 AI 챗봇입니다. 무엇을 도와드릴까요?", isUser = false)
-                } else {
-                    // 인증 실패
-                    if (authAttempts >= maxAttempts) {
-                        // 최대 시도 횟수 초과
-                        chatService.sendMessage("❌ 인증에 실패했습니다. 최대 시도 횟수를 초과했습니다.", isUser = false)
-                        chatService.sendMessage("관리자에게 문의하시거나 나중에 다시 시도해주세요.", isUser = false)
+                if (selectedTab == 0) {
+                    // 로그인 탭
+                    val username = loginUsernameField.text.trim()
+                    val password = String(loginPasswordField.password)
+                    
+                    if (username.isBlank() || password.isBlank()) {
                         JOptionPane.showMessageDialog(
                             parentComponent,
-                            "인증에 실패했습니다.\n최대 시도 횟수($maxAttempts)를 초과했습니다.\n챗봇을 초기화하거나 다시 시작해주세요.",
-                            "인증 실패",
-                            JOptionPane.ERROR_MESSAGE
-                        )
-                    } else {
-                        // 재시도 가능
-                        chatService.sendMessage("❌ 잘못된 인증키입니다. 다시 시도해주세요. (${maxAttempts - authAttempts}회 남음)", isUser = false)
-                        JOptionPane.showMessageDialog(
-                            parentComponent,
-                            "잘못된 인증키입니다.\n다시 시도해주세요. (${maxAttempts - authAttempts}회 남음)",
-                            "인증 실패",
+                            "아이디와 비밀번호를 모두 입력해주세요.",
+                            "입력 오류",
                             JOptionPane.WARNING_MESSAGE
                         )
-                        // 재귀적으로 다시 인증 다이얼로그 표시
-                        ApplicationManager.getApplication().invokeLater {
-                            attemptAuthentication()
+                        showLoginOrRegisterDialog()
+                        return
+                    }
+                    
+                    // 로딩 다이얼로그 표시 (비모달로 설정하여 UI 스레드 블로킹 방지)
+                    // JPanel의 최상위 Window를 찾아서 JDialog의 부모로 사용
+                    val parentWindow = javax.swing.SwingUtilities.getWindowAncestor(parentComponent)
+                    // JDialog 생성자는 Frame, Dialog, 또는 Window + ModalityType을 요구
+                    // parentWindow를 Frame 또는 Dialog로 캐스팅 시도
+                    val loadingDialog = when {
+                        parentWindow is Frame -> JDialog(parentWindow, "로그인 중...", false)
+                        parentWindow is Dialog -> JDialog(parentWindow, "로그인 중...", false)
+                        parentWindow is Window -> JDialog(parentWindow, "로그인 중...", Dialog.ModalityType.MODELESS)
+                        else -> JDialog().apply { title = "로그인 중..." }
+                    }
+                    if (loadingDialog.title.isBlank()) {
+                        loadingDialog.title = "로그인 중..."
+                    }
+                    loadingDialog.setSize(250, 120)
+                    loadingDialog.setLocationRelativeTo(parentComponent)
+                    val loadingPanel = JPanel(BorderLayout())
+                    loadingPanel.border = EmptyBorder(20, 20, 20, 20)
+                    loadingPanel.add(JLabel("로그인 처리 중입니다. 잠시만 기다려주세요...", SwingConstants.CENTER), BorderLayout.CENTER)
+                    loadingDialog.add(loadingPanel)
+                    loadingDialog.isVisible = true
+                    
+                    // 백그라운드 스레드에서 데이터베이스 작업 실행 (UI 프리즈 방지)
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val (success, message) = userService.login(username, password)
+                            
+                            // UI 업데이트는 UI 스레드에서 실행
+                            ApplicationManager.getApplication().invokeLater {
+                                loadingDialog.dispose()
+                                
+                                if (success) {
+                                    val user = userService.getCurrentUser()
+                                    chatService.sendMessage("✅ $message", isUser = false)
+                                    chatService.sendMessage("안녕하세요! 소진공 AI 챗봇입니다. 무엇을 도와드릴까요?", isUser = false)
+                                    
+                                    // 로그인 성공 시 자동 인덱싱 시작
+                                    chatService.startAutoIndexing()
+                                } else {
+                                    authAttempts++
+                                    chatService.sendMessage("❌ $message", isUser = false)
+                                    
+                                    if (authAttempts >= maxAttempts) {
+                                        JOptionPane.showMessageDialog(
+                                            parentComponent,
+                                            "로그인에 실패했습니다.\n최대 시도 횟수($maxAttempts)를 초과했습니다.",
+                                            "로그인 실패",
+                                            JOptionPane.ERROR_MESSAGE
+                                        )
+                                    } else {
+                                        JOptionPane.showMessageDialog(
+                                            parentComponent,
+                                            "$message\n다시 시도해주세요. (${maxAttempts - authAttempts}회 남음)",
+                                            "로그인 실패",
+                                            JOptionPane.WARNING_MESSAGE
+                                        )
+                                        showLoginOrRegisterDialog()
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // 예외 발생 시 UI 스레드에서 처리
+                            ApplicationManager.getApplication().invokeLater {
+                                loadingDialog.dispose()
+                                JOptionPane.showMessageDialog(
+                                    parentComponent,
+                                    "로그인 중 오류가 발생했습니다: ${e.message}",
+                                    "오류",
+                                    JOptionPane.ERROR_MESSAGE
+                                )
+                                showLoginOrRegisterDialog()
+                            }
+                        }
+                    }
+                } else {
+                    // 회원가입 탭
+                    val name = registerNameField.text.trim()
+                    val username = registerUsernameField.text.trim()
+                    val password = String(registerPasswordField.password)
+                    val passwordConfirm = String(registerPasswordConfirmField.password)
+                    val role = roleComboBox.selectedItem as UserRole
+                    
+                    // 유효성 검사
+                    if (name.isBlank() || username.isBlank() || password.isBlank() || passwordConfirm.isBlank()) {
+                        JOptionPane.showMessageDialog(
+                            parentComponent,
+                            "모든 필드를 입력해주세요.",
+                            "입력 오류",
+                            JOptionPane.WARNING_MESSAGE
+                        )
+                        showLoginOrRegisterDialog()
+                        return
+                    }
+                    
+                    if (password != passwordConfirm) {
+                        JOptionPane.showMessageDialog(
+                            parentComponent,
+                            "비밀번호가 일치하지 않습니다.",
+                            "입력 오류",
+                            JOptionPane.WARNING_MESSAGE
+                        )
+                        showLoginOrRegisterDialog()
+                        return
+                    }
+                    
+                    // 로딩 다이얼로그 표시 (비모달로 설정하여 UI 스레드 블로킹 방지)
+                    // JPanel의 최상위 Window를 찾아서 JDialog의 부모로 사용
+                    val parentWindow = javax.swing.SwingUtilities.getWindowAncestor(parentComponent)
+                    // JDialog 생성자는 Frame, Dialog, 또는 Window + ModalityType을 요구
+                    // parentWindow를 Frame 또는 Dialog로 캐스팅 시도
+                    val loadingDialog = when {
+                        parentWindow is Frame -> JDialog(parentWindow, "회원가입 중...", false)
+                        parentWindow is Dialog -> JDialog(parentWindow, "회원가입 중...", false)
+                        parentWindow is Window -> JDialog(parentWindow, "회원가입 중...", Dialog.ModalityType.MODELESS)
+                        else -> JDialog().apply { title = "회원가입 중..." }
+                    }
+                    if (loadingDialog.title.isBlank()) {
+                        loadingDialog.title = "회원가입 중..."
+                    }
+                    loadingDialog.setSize(250, 120)
+                    loadingDialog.setLocationRelativeTo(parentComponent)
+                    val loadingPanel = JPanel(BorderLayout())
+                    loadingPanel.border = EmptyBorder(20, 20, 20, 20)
+                    loadingPanel.add(JLabel("회원가입 처리 중입니다. 잠시만 기다려주세요...", SwingConstants.CENTER), BorderLayout.CENTER)
+                    loadingDialog.add(loadingPanel)
+                    loadingDialog.isVisible = true
+                    
+                    // 백그라운드 스레드에서 데이터베이스 작업 실행 (UI 프리즈 방지)
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val (success, message) = userService.registerUser(username, password, name, role)
+                            
+                            // UI 업데이트는 UI 스레드에서 실행
+                            ApplicationManager.getApplication().invokeLater {
+                                loadingDialog.dispose()
+                                
+                                if (success) {
+                                    JOptionPane.showMessageDialog(
+                                        parentComponent,
+                                        message,
+                                        "회원가입 성공",
+                                        JOptionPane.INFORMATION_MESSAGE
+                                    )
+                                    
+                                    // 회원가입 성공 시 자동으로 로그인 (백그라운드에서 실행)
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        try {
+                                            val (loginSuccess, loginMessage) = userService.login(username, password)
+                                            
+                                            ApplicationManager.getApplication().invokeLater {
+                                                if (loginSuccess) {
+                                                    chatService.sendMessage("✅ $loginMessage", isUser = false)
+                                                    chatService.sendMessage("안녕하세요! 소진공 AI 챗봇입니다. 무엇을 도와드릴까요?", isUser = false)
+                                                    chatService.startAutoIndexing()
+                                                } else {
+                                                    chatService.sendMessage("❌ $loginMessage", isUser = false)
+                                                }
+                                            }
+                                        } catch (e: Exception) {
+                                            ApplicationManager.getApplication().invokeLater {
+                                                chatService.sendMessage("❌ 자동 로그인 중 오류가 발생했습니다: ${e.message}", isUser = false)
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    JOptionPane.showMessageDialog(
+                                        parentComponent,
+                                        message,
+                                        "회원가입 실패",
+                                        JOptionPane.ERROR_MESSAGE
+                                    )
+                                    showLoginOrRegisterDialog()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // 예외 발생 시 UI 스레드에서 처리
+                            ApplicationManager.getApplication().invokeLater {
+                                loadingDialog.dispose()
+                                JOptionPane.showMessageDialog(
+                                    parentComponent,
+                                    "회원가입 중 오류가 발생했습니다: ${e.message}",
+                                    "오류",
+                                    JOptionPane.ERROR_MESSAGE
+                                )
+                                showLoginOrRegisterDialog()
+                            }
                         }
                     }
                 }
-                
-                // 입력된 패스워드 클리어 (보안)
-                passwordField.text = ""
             } else {
-                // 사용자가 취소를 누른 경우
-                chatService.sendMessage("❌ 인증이 취소되었습니다. 챗봇을 사용하려면 인증이 필요합니다.", isUser = false)
+                // 취소
+                chatService.sendMessage("❌ 로그인이 취소되었습니다. 챗봇을 사용하려면 로그인이 필요합니다.", isUser = false)
             }
         }
-
-        // 인증 시도 시작
-        attemptAuthentication()
+        
+        // 다이얼로그 표시 시작
+        showLoginOrRegisterDialog()
     }
 }

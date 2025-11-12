@@ -35,6 +35,12 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation(files("lib/tibero7-jdbc.jar"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
+    // SQLite JDBC 드라이버 - SLF4J 의존성 제외 (IntelliJ 플랫폼과 충돌 방지)
+    implementation("org.xerial:sqlite-jdbc:3.44.1.0") {
+        exclude(group = "org.slf4j", module = "slf4j-api")
+        exclude(group = "org.slf4j", module = "slf4j-simple")
+        exclude(group = "org.slf4j", module = "slf4j-nop")
+    }
 }
 
 intellijPlatform {

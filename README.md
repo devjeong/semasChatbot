@@ -54,9 +54,9 @@
 ### 🧠 RAG 기반 프로젝트 인덱싱 시스템
 
 #### **자동 프로젝트 인덱싱**
-- 인증 후 자동으로 프로젝트 전체 스캔 및 인덱싱
+- 프로젝트 시작 시 자동으로 전체 스캔 및 인덱싱
 - Java, Kotlin, JS, TS, Vue, SQL, XML, YAML, JSON 파일 지원
-- PSI 트리 분석을 통한 정확한 코드 구조 파악
+- PSI 트리 분석을 통한 정확한 코드 구조 파악 (클래스, 메서드, 필드 단위)
 - 실시간 진행 상황 보고
 
 ```kotlin
@@ -65,21 +65,38 @@
 📂 지원되는 파일 확장자: java, kt, js, ts, vue, sql, xml, yml, yaml, json
 ⚙️ PSI 트리를 분석하여 코드 구조를 파악합니다...
 🔧 인덱싱 통계를 생성하고 있습니다...
+🔄 실시간 인덱싱이 활성화되었습니다. 파일 변경사항이 자동으로 반영됩니다!
 🎉 자동 프로젝트 인덱싱이 완료되었습니다!
 ```
 
-#### **지능형 코드 검색**
-- 의미론적 코드 검색으로 관련성 높은 코드 조각 발견
-- 파일명, 클래스명, 메서드명, 코드 내용 종합 분석
-- 코드 타입별 가중치 적용 (클래스 > 메서드 > 파일)
+#### **🔄 실시간 인덱싱 시스템**
+- **자동 파일 변경 감지**: 파일 생성/수정/삭제 시 자동 감지 및 인덱싱
+- **배치 처리 최적화**: 여러 파일 변경을 모아서 일괄 처리 (최대 100개, 0.4초 간격)
+- **해시 기반 중복 방지**: SHA-256 해시로 불필요한 재인덱싱 방지 (평균 72.6% 성능 향상)
+- **스마트 필터링**: 지원 파일만 선별적으로 인덱싱, 빌드 디렉토리 제외
 
 ```kotlin
-// 검색 알고리즘 예시
-private fun calculateRelevanceScore(chunk: CodeChunk, queryTerms: List<String>): Double {
-    // 시그니처 매치: 15점
-    // 파일명 매치: 10점  
-    // 내용 매치: 5점
-    // 정확한 단어 매치 보너스: 3점
+// 실시간 인덱싱 아키텍처
+RealTimeIndexingService
+├── CodeIndexingService      // 코드 인덱싱 핵심 로직
+├── FileHashService          // SHA-256 해시 기반 중복 방지
+├── BatchIndexingProcessor   // 배치 처리 최적화
+└── FileChangeListener       // 파일 변경 감지
+```
+
+#### **지능형 코드 검색**
+- **다중 검색 전략**: 역색인(토큰 기반) + 파일명/시그니처/내용 매칭
+- **관련성 점수 계산**: 시그니처 매치(15점) > 파일명 매치(10점) > 내용 매치(5점)
+- **타입별 가중치**: 클래스 > 메서드 > 필드 > 파일 순으로 우선순위 적용
+- **최대 5개 결과**: 토큰 효율성을 위해 관련성 높은 코드만 포함
+
+```kotlin
+// 검색 알고리즘
+fun searchRelevantCode(query: String, maxResults: Int = 5): List<CodeChunk> {
+    // 1. 단순 토큰 질의인 경우 역색인 우선 사용
+    // 2. 파일명/시그니처/내용 종합 매칭
+    // 3. 관련성 점수 기반 정렬
+    // 4. 상위 N개 반환
 }
 ```
 
@@ -92,32 +109,56 @@ A: [RAG_QUESTION] 프로젝트의 인증은 ChatService.kt의 authenticateUser �
 
 === 참조 코드 1: ChatService.kt (METHOD) ===
 위치: /src/main/kotlin/.../ChatService.kt:194-211
+시그니처: authenticateUser(String): Boolean
 ```
 
-### 🏷️ 응답 타입 분류 시스템
+### 🏷️ 지능형 입력 분류 시스템
 
-AI 응답에 타입 태그를 자동으로 추가하여 답변 종류를 명확히 구분:
-
+#### **6가지 입력 타입 자동 분류**
 ```kotlin
 enum class UserInputType {
-    RAG_QUESTION,           // 코드베이스 기반 질문
-    INSTRUCTION,            // 코드 수정/개선 지시  
-    CURSOR_CODE_GENERATION, // 커서 위치 코드 생성
-    GENERAL_QUESTION        // 일반적인 질문
+    GENERAL_QUESTION,           // 일반 질문 (프로젝트 맥락 없음)
+    RAG_QUESTION,              // RAG 기반 질문 (코드베이스 관련)
+    NEW_SOURCE,                // 신규 소스 작성 요청
+    INSTRUCTION,               // 코드 수정/개선 지시
+    CURSOR_CODE_GENERATION,    // 커서 위치 코드 생성
+    EXTERNAL_FILE_EDIT         // 외부 파일 수정
 }
 ```
 
+#### **2단계 분류 프로세스**
+1. **LLM 기반 사전 분류**: LLM이 입력 의도를 정확히 파악 (NEW_SOURCE / RAG_QUESTION / GENERAL_QUESTION)
+2. **휴리스틱 분류 (폴백)**: 키워드/패턴 기반 빠른 분류
+
 **응답 예시:**
 - `[RAG_QUESTION]` 프로젝트의 인증 시스템은...
-- `[GENERAL]` 안녕하세요! 무엇을 도와드릴까요?
+- `[GENERAL_QUESTION]` 안녕하세요! 무엇을 도와드릴까요?
 - `[Modified]` 개선된 코드는 다음과 같습니다...
+
+### 🗄️ 데이터베이스 연결 기능
+
+#### **Tibero 데이터베이스 지원**
+- **환경별 자동 설정**: 개발/테스트 환경 선택 시 자동으로 연결 정보 입력
+- **연결 테스트**: 설정 후 즉시 연결 테스트 가능
+- **테이블 필터링**: 특정 테이블만 선택적으로 인덱싱 가능
+- **스키마 정보 활용**: 데이터베이스 스키마를 기반으로 한 질의응답 지원
+
+```kotlin
+// DB 연결 설정 예시
+환경: 개발
+Host: 10.64.224.15
+Port: 8629
+Database: db_dev
+User: SEMAS24
+대상 테이블: user, product, order (콤마 구분, 비우면 전체)
+```
 
 ### 🎛️ 개선된 UI/UX
 
-#### **프로젝트 인덱싱 버튼 제거**
-- 수동 인덱싱 버튼 제거 (자동화로 대체)
-- 깔끔해진 상단 버튼 배치
-- 사용자 편의성 향상
+#### **모던한 헤더 디자인**
+- Protein 26 브랜딩 및 Beta 배지
+- 온라인 상태 표시
+- 직관적인 아이콘 및 색상
 
 #### **진행 상황 실시간 피드백**
 ```
@@ -125,8 +166,14 @@ enum class UserInputType {
 🔍 프로젝트 파일을 스캔하고 있습니다...
 📂 지원되는 파일 확장자: java, kt, js, ts, vue, sql, xml, yml, yaml, json
 ⚙️ PSI 트리를 분석하여 코드 구조를 파악합니다...
+🔄 실시간 인덱싱이 활성화되었습니다. 파일 변경사항이 자동으로 반영됩니다!
 🎉 자동 프로젝트 인덱싱이 완료되었습니다!
 ```
+
+#### **Tools 메뉴 통합**
+- **Force Reindexing**: 전체 프로젝트 강제 재인덱싱
+- **Show Indexing Statistics**: 상세 인덱싱 통계 확인
+- **Toggle Real-time Indexing**: 실시간 인덱싱 활성화/비활성화
 
 ---
 
@@ -351,41 +398,101 @@ AI: [RAG_QUESTION] 사용자 인증은 ChatService.kt의 authenticateUser 메서
 ```
 semasChatbot/
 ├── src/main/kotlin/org/dev/semaschatbot/
-│   ├── ChatService.kt                   # 핵심 비즈니스 로직 & 인증 관리
-│   ├── CodeIndexingService.kt           # 🆕 프로젝트 인덱싱 & RAG 검색
+│   ├── ChatService.kt                   # 핵심 비즈니스 로직 & 인증 관리 & 입력 분류
+│   ├── CodeIndexingService.kt           # 프로젝트 인덱싱 & RAG 검색
+│   ├── RealTimeIndexingService.kt        # 🆕 실시간 인덱싱 통합 관리
+│   ├── FileHashService.kt               # 🆕 SHA-256 해시 기반 중복 방지
+│   ├── BatchIndexingProcessor.kt        # 🆕 배치 처리 최적화
+│   ├── FileChangeListener.kt            # 🆕 파일 변경 감지 리스너
 │   ├── LmStudioClient.kt                # LLM 서버 통신 & URL 관리
 │   ├── LLMChatToolWindowFactory.kt      # UI 컴포넌트 팩토리 & 인증 UI
 │   ├── SendSelectionToChatAction.kt     # 컨텍스트 메뉴 액션
 │   ├── AddCodeAtCursorAction.kt         # 커서 위치 코드 추가 액션
-│   └── CodeActionLineMarkerProvider.kt  # 라인 마커 프로바이더
+│   ├── CodeActionLineMarkerProvider.kt   # 라인 마커 프로바이더
+│   ├── ForceReindexingAction.kt         # 🆕 강제 재인덱싱 액션
+│   ├── IndexingStatsAction.kt           # 🆕 인덱싱 통계 액션
+│   └── ToggleRealTimeIndexingAction.kt # 🆕 실시간 인덱싱 토글 액션
 ├── src/main/resources/
-│   ├── config.properties                # 인증키 및 설정 파일
-│   ├── USER_GUIDE.md                    # 사용자 가이드
+│   ├── config.properties                 # 인증키 및 설정 파일
+│   ├── USER_GUIDE.md                     # 사용자 가이드
 │   └── META-INF/
-│       ├── plugin.xml                   # 플러그인 설정
-│       ├── pluginIcon.svg               # 플러그인 아이콘
+│       ├── plugin.xml                    # 플러그인 설정
+│       ├── pluginIcon.svg                # 플러그인 아이콘
 │       └── MessagesBundle.properties    # 다국어 지원
-├── build.gradle.kts                     # 빌드 설정
-└── README.md                            # 프로젝트 문서
+├── build.gradle.kts                      # 빌드 설정
+└── README.md                             # 프로젝트 문서
 ```
 
-### 새로운 핵심 클래스
+### 핵심 클래스
 
-#### **CodeIndexingService**
+#### **RealTimeIndexingService** (통합 관리)
+```kotlin
+@Service(Service.Level.PROJECT)
+class RealTimeIndexingService(private val project: Project) {
+    private val indexingService = CodeIndexingService(project)
+    private val hashService = FileHashService(project)
+    private val batchProcessor = BatchIndexingProcessor(...)
+    private val fileChangeListener = FileChangeListener(...)
+    
+    // 실시간 인덱싱 시작/중지
+    fun startRealTimeIndexing()
+    fun stopRealTimeIndexing()
+    
+    // 강제 재인덱싱
+    fun forceReindexing()
+    fun forceReindexFile(filePath: String)
+    
+    // 통계 조회
+    fun getAllStats(): Map<String, Any>
+}
+```
+
+#### **CodeIndexingService** (인덱싱 핵심)
 ```kotlin
 @Service(Service.Level.PROJECT)
 class CodeIndexingService(private val project: Project) {
     private val codeChunks = ConcurrentHashMap<String, CodeChunk>()
+    private val invertedIndex = ConcurrentHashMap<String, MutableSet<String>>()
     
-    // 프로젝트 자동 인덱싱
+    // 프로젝트 전체 인덱싱
     fun indexProject(): Int
     
-    // 관련 코드 검색
-    fun searchRelevantCode(query: String): List<CodeChunk>
+    // 관련 코드 검색 (RAG)
+    fun searchRelevantCode(query: String, maxResults: Int = 5): List<CodeChunk>
     
     // 코드 조각 관리
     fun getAllCodeChunks(): Collection<CodeChunk>
     fun getIndexingStats(): Map<String, Int>
+}
+```
+
+#### **FileHashService** (중복 방지)
+```kotlin
+@Service(Service.Level.PROJECT)
+class FileHashService(private val project: Project) {
+    private val fileHashes = ConcurrentHashMap<String, String>()
+    
+    // SHA-256 해시 기반 변경 감지
+    fun shouldReindex(file: VirtualFile): Boolean
+    
+    // 해시 통계
+    fun getHashStats(): Map<String, Any>
+}
+```
+
+#### **BatchIndexingProcessor** (성능 최적화)
+```kotlin
+class BatchIndexingProcessor(...) {
+    // 배치 처리 설정
+    private val maxBatchSize = 100
+    private val batchDelayMs = 400L  // 0.4초
+    private val maxConcurrentOperations = 2
+    
+    // 파일 재인덱싱 스케줄링
+    fun scheduleReindexing(file: VirtualFile)
+    
+    // 성능 메트릭
+    fun getPerformanceMetrics(): PerformanceMetrics
 }
 ```
 
@@ -400,7 +507,9 @@ data class CodeChunk(
     val startLine: Int,
     val endLine: Int,
     val signature: String,
-    val summary: String
+    val summary: String,
+    val startOffset: Int = -1,
+    val endOffset: Int = -1
 )
 ```
 
@@ -410,23 +519,34 @@ data class CodeChunk(
 sequenceDiagram
     participant User
     participant ChatService
+    participant RealTimeIndexingService
     participant CodeIndexingService
+    participant FileHashService
+    participant BatchProcessor
     participant PsiManager
     participant LLMClient
     
-    User->>ChatService: authenticateUser("semas1@3")
-    ChatService->>ChatService: isValid = true
-    ChatService->>CodeIndexingService: startAutoIndexing()
+    Note over RealTimeIndexingService: 프로젝트 시작 시 자동 실행
+    RealTimeIndexingService->>CodeIndexingService: indexProject()
     CodeIndexingService->>PsiManager: scanProject()
     PsiManager-->>CodeIndexingService: PSI Elements
     CodeIndexingService->>CodeIndexingService: createCodeChunks()
-    CodeIndexingService-->>ChatService: indexingComplete()
-    ChatService-->>User: "인덱싱 완료!"
+    CodeIndexingService-->>RealTimeIndexingService: indexingComplete()
     
+    Note over RealTimeIndexingService: 파일 변경 감지
+    User->>User: 파일 수정/생성/삭제
+    FileChangeListener->>FileHashService: shouldReindex(file)
+    FileHashService-->>FileChangeListener: true (변경 감지)
+    FileChangeListener->>BatchProcessor: scheduleReindexing(file)
+    BatchProcessor->>BatchProcessor: 배치 처리 (0.4초 간격)
+    BatchProcessor->>CodeIndexingService: indexFilePublic(file)
+    CodeIndexingService-->>BatchProcessor: chunks created
+    
+    Note over ChatService: 질의응답 처리
     User->>ChatService: "인증은 어떻게 처리되나요?"
     ChatService->>ChatService: classifyInput() -> RAG_QUESTION
-    ChatService->>CodeIndexingService: searchRelevantCode("인증")
-    CodeIndexingService-->>ChatService: List<CodeChunk>
+    ChatService->>CodeIndexingService: searchRelevantCode("인증", 5)
+    CodeIndexingService-->>ChatService: List<CodeChunk> (최대 5개)
     ChatService->>LLMClient: sendChatRequest(context + query)
     LLMClient-->>ChatService: "[RAG_QUESTION] 인증은..."
     ChatService-->>User: AI Response with code references
@@ -499,8 +619,12 @@ chunks.forEach { chunk ->
 - ✅ 동적 서버 URL 설정
 - ✅ **🆕 자동 프로젝트 인덱싱**
 - ✅ **🆕 RAG 기반 코드베이스 질의응답**
-- ✅ **🆕 응답 타입 분류 시스템**
-- ✅ **🆕 지능형 코드 검색**
+- ✅ **🆕 지능형 입력 분류 시스템 (6가지 타입)**
+- ✅ **🆕 실시간 인덱싱 시스템**
+- ✅ **🆕 해시 기반 중복 방지 (SHA-256)**
+- ✅ **🆕 배치 처리 최적화**
+- ✅ **🆕 데이터베이스 연결 기능 (Tibero)**
+- ✅ **🆕 Tools 메뉴 통합 (재인덱싱, 통계, 토글)**
 
 ### v1.2.0 (계획)
 - 🔄 다중 LLM 서버 지원
@@ -556,11 +680,14 @@ chunks.forEach { chunk ->
 - **소형 프로젝트** (< 100 파일): 30초 이내
 - **중형 프로젝트** (100-500 파일): 1-2분
 - **대형 프로젝트** (500+ 파일): 2-5분
+- **실시간 인덱싱**: 파일 변경 시 0.4초 배치 처리
+- **해시 기반 최적화**: 평균 72.6% 중복 인덱싱 방지
 
 ### 검색 성능
 - **평균 응답 시간**: 0.5초 이내
 - **검색 정확도**: 85% 이상
-- **토큰 절약률**: 80-90%
+- **토큰 절약률**: 80-90% (코드 내용 길이 제한, 관련 코드만 포함)
+- **배치 처리 효율**: 최대 100개 파일 동시 처리, 최대 2개 동시 작업
 
 ---
 

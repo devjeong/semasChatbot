@@ -26,7 +26,6 @@ import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
-import groovy.util.logging.Slf4j
 import java.awt.Color
 import java.util.regex.Pattern
 import javax.swing.border.EmptyBorder
@@ -172,11 +171,11 @@ data class PendingExternalFileEdit(
     val virtualFile: com.intellij.openapi.vfs.VirtualFile? = null
 )
 
-@Slf4j
 @Service(Service.Level.PROJECT)
 class ChatService(private val project: Project) {
 
     private val apiClient = LmStudioClient()
+    private val geminiClient = GeminiClient()
     // 실시간 인덱싱 서비스의 CodeIndexingService 인스턴스 사용
     private val realTimeIndexingService = project.getService(RealTimeIndexingService::class.java)
     private val codeIndexingService: CodeIndexingService
@@ -251,22 +250,51 @@ class ChatService(private val project: Project) {
     // 외부 파일 수정 제안을 관리하기 위한 변수
     private var pendingExternalFileEdit: PendingExternalFileEdit? = null
 
-    // 인증 관련 변수들
-    private var isAuthenticated: Boolean = false
-    private var configProperties: Properties? = null
+    // 사용자 서비스 (회원인증 및 사용량 관리)
+    private val userService = UserService(project)
 
     // DB 스키마 정보
     private var dbSchema: String? = null
 
-    // LM Studio 모델 선택 상태
+    // 모델 선택 상태 (Gemini 또는 LM Studio)
     @Volatile
     private var selectedModelId: String = "default-model"
 
     fun setSelectedModel(modelId: String) {
+        println("[ChatService] setSelectedModel 호출: '$modelId'")
         selectedModelId = modelId
+        println("[ChatService] selectedModelId 업데이트 완료: '$selectedModelId'")
     }
 
     fun getSelectedModel(): String = selectedModelId
+    
+    /**
+     * 선택된 모델이 Gemini 모델인지 확인합니다.
+     * @return Gemini 모델 여부
+     */
+    private fun isGeminiModel(modelId: String): Boolean {
+        val isGemini = modelId.startsWith("💎") || modelId.startsWith("gemini-")
+        println("[ChatService] isGeminiModel 체크: '$modelId' -> $isGemini (startsWith('💎'): ${modelId.startsWith("💎")}, startsWith('gemini-'): ${modelId.startsWith("gemini-")})")
+        return isGemini
+    }
+    
+    /**
+     * 모델 ID에서 실제 Gemini 모델명을 추출합니다.
+     * @param modelId 선택된 모델 ID (예: "💎 gemini-1.5-flash")
+     * @return 실제 모델명 (예: "gemini-1.5-flash")
+     */
+    private fun extractGeminiModelId(modelId: String): String {
+        return if (modelId.startsWith("💎")) {
+            // "💎 " 또는 "💎"로 시작하는 경우 처리
+            val cleaned = modelId.replace(Regex("^💎\\s*"), "").trim()
+            println("[ChatService] 모델명 추출: '$modelId' -> '$cleaned'")
+            cleaned
+        } else if (modelId.startsWith("gemini-")) {
+            modelId
+        } else {
+            modelId
+        }
+    }
 
     fun listLmStudioModels(): List<String> {
         return try {
@@ -295,71 +323,104 @@ class ChatService(private val project: Project) {
         return apiClient.getBaseUrl()
     }
 
-    /**
-     * 설정 파일을 로드합니다.
-     */
-    private fun loadConfigProperties(): Properties? {
-        return try {
-            val properties = Properties()
-            val inputStream: InputStream? = this::class.java.classLoader.getResourceAsStream("config.properties")
-            inputStream?.use {
-                properties.load(it)
-            }
-            properties
-        } catch (e: Exception) {
-            println("설정 파일을 로드하는 중 오류 발생: ${e.message}")
-            null
-        }
-    }
-
+    // Gemini API 설정 관리
+    @Volatile
+    private var geminiApiKey: String = ""
     
-
     /**
-     * 인증키를 검증합니다.
-     * @param inputKey 사용자가 입력한 인증키
-     * @return 인증 성공 여부
+     * Gemini API Key를 반환합니다.
+     * @return API Key
      */
-    fun authenticateUser(inputKey: String): Boolean {
-        if (configProperties == null) {
-            configProperties = loadConfigProperties()
+    fun getGeminiApiKey(): String {
+        return geminiApiKey
+    }
+    
+    /**
+     * Gemini API Key를 설정합니다.
+     * @param apiKey API Key
+     */
+    fun setGeminiApiKey(apiKey: String) {
+        geminiApiKey = apiKey.trim()
+        geminiClient.setApiKey(geminiApiKey)
+        // 설정 저장
+        saveGeminiSettings()
+    }
+    
+    /**
+     * Gemini 설정을 파일에 저장합니다.
+     */
+    private fun saveGeminiSettings() {
+        try {
+            val configFile = File(project.basePath ?: System.getProperty("user.home"), ".semas-chatbot/gemini.properties")
+            configFile.parentFile?.mkdirs()
+            val props = Properties()
+            props.setProperty("gemini.apiKey", geminiApiKey)
+            configFile.outputStream().use { props.store(it, "Gemini API Settings") }
+        } catch (e: Exception) {
+            println("Gemini 설정 저장 오류: ${e.message}")
         }
-        
-        val correctKey = configProperties?.getProperty("auth.key")
-        val isValid = correctKey != null && inputKey.trim() == correctKey
-        
-        if (isValid) {
-            isAuthenticated = true
-            
-            // 인증 성공 시 자동으로 프로젝트 인덱싱 시작
-            sendMessage("✅ 인증이 완료되었습니다! 자동으로 프로젝트 인덱싱을 시작합니다.", isUser = false)
-            startAutoIndexing()
+    }
+    
+    /**
+     * Gemini 설정을 파일에서 로드합니다.
+     */
+    private fun loadGeminiSettings() {
+        try {
+            val configFile = File(project.basePath ?: System.getProperty("user.home"), ".semas-chatbot/gemini.properties")
+            if (configFile.exists()) {
+                val props = Properties()
+                configFile.inputStream().use { props.load(it) }
+                geminiApiKey = props.getProperty("gemini.apiKey", "")
+                if (geminiApiKey.isNotBlank()) {
+                    geminiClient.setApiKey(geminiApiKey)
+                }
+            }
+        } catch (e: Exception) {
+            println("Gemini 설정 로드 오류: ${e.message}")
         }
-        
-        return isValid
+    }
+    
+    init {
+        // 초기화 시 설정 로드
+        loadGeminiSettings()
     }
 
     /**
-     * 현재 인증 상태를 반환합니다.
-     * @return 인증 여부
+     * 현재 로그인 상태를 반환합니다.
+     * @return 로그인 여부
      */
     fun isUserAuthenticated(): Boolean {
-        return isAuthenticated
+        return userService.isLoggedIn()
     }
 
     /**
-     * 인증 상태를 초기화합니다.
+     * 로그인 상태를 초기화합니다.
      */
     fun resetAuthentication() {
-        isAuthenticated = false
-        sendMessage("인증이 초기화되었습니다. 다시 인증해주세요.", isUser = false)
+        userService.logout()
+        sendMessage("로그아웃되었습니다. 다시 로그인해주세요.", isUser = false)
     }
 
     /**
-     * 인증이 필요한지 확인합니다.
-     * @return 인증이 필요한 경우 true
+     * 로그인이 필요한지 확인합니다.
+     * @return 로그인이 필요한 경우 true
      */
     fun requiresAuthentication(): Boolean {
-        return !isAuthenticated
+        return !userService.isLoggedIn()
+    }
+    
+    /**
+     * 현재 로그인한 사용자 정보를 반환합니다.
+     */
+    fun getCurrentUser(): User? {
+        return userService.getCurrentUser()
+    }
+    
+    /**
+     * UserService 인스턴스를 반환합니다.
+     */
+    fun getUserService(): UserService {
+        return userService
     }
 
     /**
@@ -607,6 +668,8 @@ class ChatService(private val project: Project) {
     fun indexProject() {
         sendMessage("🔍 프로젝트 인덱싱을 시작합니다...", isUser = false)
         
+        val startTime = System.currentTimeMillis()
+        
         object : SwingWorker<Int, Void>() {
             override fun doInBackground(): Int {
                 return codeIndexingService.indexProject()
@@ -616,6 +679,11 @@ class ChatService(private val project: Project) {
                 try {
                     val chunkCount = get()
                     val stats = codeIndexingService.getIndexingStats()
+                    val indexingTime = System.currentTimeMillis() - startTime
+                    
+                    // 사용량 측정: 인덱싱 기록
+                    val indexedFiles = stats["file"] ?: 0
+                    userService.recordIndexing(indexedFiles, chunkCount, indexingTime)
                     
                     val statsMessage = buildString {
                         appendLine("✅ 프로젝트 인덱싱이 완료되었습니다!")
@@ -637,10 +705,10 @@ class ChatService(private val project: Project) {
     }
 
     /**
-     * 인증 성공 시 자동으로 실행되는 프로젝트 인덱싱입니다.
+     * 로그인 성공 시 자동으로 실행되는 프로젝트 인덱싱입니다.
      * 실시간 인덱싱 서비스를 시작하고 진행 상황을 상세히 보고합니다.
      */
-    private fun startAutoIndexing() {
+    fun startAutoIndexing() {
         object : SwingWorker<Boolean, String>() {
             override fun doInBackground(): Boolean {
                 publish("🔍 프로젝트 파일을 스캔하고 있습니다...")
@@ -1030,11 +1098,14 @@ class ChatService(private val project: Project) {
      * @param userInput 사용자의 입력 메시지
      */
     fun sendChatRequestToLLM(userInput: String) {
-        // 인증 체크
+        // 로그인 체크
         if (!isUserAuthenticated()) {
-            sendMessage("❌ 인증이 필요합니다. 인증키를 입력해주세요.", isUser = false)
+            sendMessage("❌ 로그인이 필요합니다. 로그인해주세요.", isUser = false)
             return
         }
+        
+        // 사용량 측정: 메시지 기록
+        userService.recordMessage(userInput.length)
         val codeContext = selectedCode  // 선택된 영역만 사용
         val fileContext = selectedFileInfo
         val editor = FileEditorManager.getInstance(project).selectedTextEditor
@@ -1289,8 +1360,108 @@ class ChatService(private val project: Project) {
         val initialPanelRef = arrayOfNulls<JPanel>(1)
         val initialTextAreaRef = arrayOfNulls<JTextArea>(1)
         val accumulatedResponse = StringBuilder()
+        val startTime = System.currentTimeMillis()
 
-        apiClient.sendChatRequestStream(
+        // 선택된 모델이 Gemini 모델인지 확인하여 클라이언트 선택
+        val isGemini = isGeminiModel(selectedModelId)
+        val actualGeminiModelId = if (isGemini) extractGeminiModelId(selectedModelId) else null
+        
+        // 디버깅: 모델 선택 정보 출력
+        println("[ChatService] 선택된 모델: $selectedModelId")
+        println("[ChatService] Gemini 모델 여부: $isGemini")
+        println("[ChatService] 실제 Gemini 모델 ID: $actualGeminiModelId")
+        println("[ChatService] Gemini API Key 존재 여부: ${geminiApiKey.isNotBlank()}")
+        
+        if (isGemini && actualGeminiModelId != null) {
+            // Gemini 모델 선택 시 API Key 확인
+            if (geminiApiKey.isBlank()) {
+                ApplicationManager.getApplication().invokeLater {
+                    loadingIndicator?.isVisible = false
+                    sendMessage("❌ Gemini 모델을 사용하려면 API Key가 필요합니다. 모델 선택 시 API Key를 입력해주세요.", isUser = false)
+                    clearCursorContext()
+                }
+                return
+            }
+            
+            // Gemini API 사용
+            println("[ChatService] Gemini API 호출 시작: modelId=$actualGeminiModelId")
+            geminiClient.sendChatRequestStream(
+                userMessage = prompt,
+                systemMessage = systemMessage,
+                modelId = actualGeminiModelId,
+                onDelta = { delta ->
+                    ApplicationManager.getApplication().invokeLater {
+                        // 응답 누적
+                        accumulatedResponse.append(delta)
+                        
+                        val existingPanel = initialPanelRef[0]
+                        val existingText = initialTextAreaRef[0]
+                        if (existingPanel == null || existingText == null) {
+                            // 첫 델타 수신 시 패널 생성
+                            chatPanel?.let { panel ->
+                                val messagePanel = createMessagePanel(delta, false)
+                                if (panel.componentCount > 0) {
+                                    panel.add(Box.createVerticalStrut(8))
+                                }
+                                panel.add(messagePanel)
+                                panel.revalidate()
+                                panel.repaint()
+                                scrollToBottom()
+                                initialPanelRef[0] = messagePanel
+                                initialTextAreaRef[0] = findTextArea(messagePanel)
+                                focusMessagePanel(messagePanel)
+                            }
+                        } else {
+                            // 이후 델타는 누적하고, 전체 텍스트 기준으로 버블을 재생성하여 크기를 정확히 맞춤
+                            val newText = existingText.text + delta
+                            rebuildMessagePanel(existingPanel, newText) { newPanel ->
+                                initialPanelRef[0] = newPanel
+                                initialTextAreaRef[0] = findTextArea(newPanel)
+                                focusMessagePanel(newPanel)
+                            }
+                            scrollToBottom()
+                        }
+                    }
+                },
+                onComplete = {
+                    ApplicationManager.getApplication().invokeLater {
+                        loadingIndicator?.isVisible = false
+                        
+                        // 사용량 측정: API 호출 성공 기록
+                        val responseTime = System.currentTimeMillis() - startTime
+                        val responseText = accumulatedResponse.toString()
+                        val estimatedInputTokens = prompt.length / 4
+                        val estimatedOutputTokens = responseText.length / 4
+                        userService.recordApiCall(true, responseTime)
+                        userService.recordTokens(estimatedInputTokens, estimatedOutputTokens)
+                        
+                        // INSTRUCTION 타입인 경우 응답을 파싱하여 처리
+                        if (inputType == UserInputType.INSTRUCTION && editor != null) {
+                            val fullResponse = accumulatedResponse.toString()
+                            println("[ChatService] INSTRUCTION 응답 완료, 파싱 시작: ${fullResponse.take(200)}...")
+                            handleInstructionResponse(fullResponse, editor)
+                        }
+                        
+                        clearCursorContext()
+                    }
+                },
+                onError = { e ->
+                    ApplicationManager.getApplication().invokeLater {
+                        loadingIndicator?.isVisible = false
+                        
+                        // 사용량 측정: API 호출 실패 기록
+                        val responseTime = System.currentTimeMillis() - startTime
+                        userService.recordApiCall(false, responseTime)
+                        
+                        sendMessage("Gemini API 오류가 발생했습니다: ${e.message}", isUser = false)
+                        clearCursorContext()
+                    }
+                }
+            )
+        } else {
+            // LM Studio 사용 (기존 로직)
+            println("[ChatService] LM Studio API 호출 (Gemini 모델이 아님): selectedModelId='$selectedModelId'")
+            apiClient.sendChatRequestStream(
             userMessage = prompt,
             systemMessage = systemMessage,
             modelId = selectedModelId,
@@ -1332,6 +1503,15 @@ class ChatService(private val project: Project) {
                 ApplicationManager.getApplication().invokeLater {
                     loadingIndicator?.isVisible = false
                     
+                    // 사용량 측정: API 호출 성공 기록
+                    val responseTime = System.currentTimeMillis() - startTime
+                    val responseText = accumulatedResponse.toString()
+                    // 간단한 토큰 추정 (실제로는 API 응답에서 가져와야 함)
+                    val estimatedInputTokens = prompt.length / 4  // 대략적인 추정
+                    val estimatedOutputTokens = responseText.length / 4
+                    userService.recordApiCall(true, responseTime)
+                    userService.recordTokens(estimatedInputTokens, estimatedOutputTokens)
+                    
                     // INSTRUCTION 타입인 경우 응답을 파싱하여 처리
                     if (inputType == UserInputType.INSTRUCTION && editor != null) {
                         val fullResponse = accumulatedResponse.toString()
@@ -1346,12 +1526,18 @@ class ChatService(private val project: Project) {
             onError = { e ->
                 ApplicationManager.getApplication().invokeLater {
                     loadingIndicator?.isVisible = false
+                    
+                    // 사용량 측정: API 호출 실패 기록
+                    val responseTime = System.currentTimeMillis() - startTime
+                    userService.recordApiCall(false, responseTime)
+                    
                     sendMessage("오류가 발생했습니다: ${e.message}", isUser = false)
                     // 선택 컨텍스트는 유지하여 적용 버튼에서 사용할 수 있도록 함
                     clearCursorContext()
                 }
             }
         )
+        }
     }
 
     /**
@@ -1848,6 +2034,11 @@ class ChatService(private val project: Project) {
             change.document.replaceString(change.startOffset, change.endOffset, change.modifiedCode)
         }
         pendingChanges.remove(change)
+        
+        // 사용량 측정: 코드 수정 기록
+        val modifiedLines = change.modifiedCode.lines().size
+        userService.recordCodeModification(1, modifiedLines)
+        
         ApplicationManager.getApplication().invokeLater {
             val editor = FileEditorManager.getInstance(project).selectedTextEditor
             editor?.markupModel?.removeAllHighlighters() // 하이라이터 제거
@@ -1978,6 +2169,10 @@ class ChatService(private val project: Project) {
         WriteCommandAction.runWriteCommandAction(project) {
             fileChange.document.setText(fileChange.modifiedContent)
         }
+        
+        // 사용량 측정: 코드 수정 기록
+        val modifiedLines = fileChange.modifiedContent.lines().size
+        userService.recordCodeModification(1, modifiedLines)
         
         // 저장 후 정리
         pendingFileChange = null
@@ -3974,12 +4169,15 @@ button:hover {
 
     /**
      * DB에 연결하여 스키마 정보를 수집하고 systemMessage에 추가합니다.
-     * @param dbType DB 종류 (PostgreSQL, MySQL)
+     * 성능 최적화: 인덱스 정보, Primary Key, Foreign Key 정보를 포함하여 수집합니다.
+     * 
+     * @param dbType DB 종류 (Tibero 등)
      * @param host 호스트
      * @param port 포트
      * @param dbName 데이터베이스 이름
      * @param user 사용자
      * @param password 비밀번호
+     * @param targetTables 대상 테이블 목록 (콤마 구분, 비우면 전체)
      */
     fun connectToDB(dbType: String, host: String, port: String, dbName: String, user: String, password: String, targetTables: String = "") {
         sendMessage("🕒 DB 스키마 학습 중... 잠시만 기다려주세요.", isUser = false)
@@ -4007,58 +4205,165 @@ button:hover {
                     println("Debug: Connected successfully")
 
                     val meta = conn.metaData
-
-                    val schema = StringBuilder()
                     val schemaPattern = "SEMAS24"
                     val tableNames = mutableListOf<String>()
 
+                    // 테이블 목록 수집 (최적화: 배치 처리)
                     if (targetTables.isBlank()) {
                         println("Debug: Fetching all tables")
-                        val tablesRs: ResultSet = meta.getTables(null, schemaPattern, "TB_%", arrayOf("TABLE"))
-                        while (tablesRs.next()) {
-                            tableNames.add(tablesRs.getString("TABLE_NAME"))
+                        meta.getTables(null, schemaPattern, "TB_%", arrayOf("TABLE")).use { tablesRs ->
+                            while (tablesRs.next()) {
+                                tableNames.add(tablesRs.getString("TABLE_NAME"))
+                            }
                         }
-                        tablesRs.close()
                         println("Debug: Found ${tableNames.size} tables")
                     } else {
-                        tableNames.addAll(targetTables.split(",").map { it.trim() })
+                        tableNames.addAll(targetTables.split(",").map { it.trim().uppercase() })
                         println("Debug: Using specified tables: $tableNames")
                     }
 
-                    // Parallel column collection
-                    val columnJobs = tableNames.map { tableName ->
+                    // 테이블 수 제한으로 성능 보장 (최대 50개)
+                    val limitedTableNames = tableNames.take(50)
+                    if (tableNames.size > 50) {
+                        println("Debug: Limiting to 50 tables for performance")
+                    }
+
+                    // 병렬 처리로 스키마 정보 수집 (컬럼, 인덱스, PK, FK)
+                    val schemaJobs = limitedTableNames.map { tableName ->
                         async {
-                            println("Debug: Fetching columns for $tableName")
-                            val columnsRs: ResultSet = meta.getColumns(null, schemaPattern, tableName, "%")
-                            val tableSchema = StringBuilder("Table: $tableName\n")
-                            while (columnsRs.next()) {
-                                val colName = columnsRs.getString("COLUMN_NAME")
-                                val colType = columnsRs.getString("TYPE_NAME")
-                                tableSchema.append("  - $colName ($colType)\n")
+                            try {
+                                collectTableSchemaInfo(meta, schemaPattern, tableName)
+                            } catch (e: Exception) {
+                                println("Debug: Error collecting schema for $tableName: ${e.message}")
+                                "Table: $tableName\n  [Error: ${e.message}]\n"
                             }
-                            columnsRs.close()
-                            println("Debug: Fetched columns for $tableName")
-                            tableSchema.toString()
                         }
                     }
 
-                    val columnResults = columnJobs.awaitAll()
-                    columnResults.forEach { schema.append(it) }
+                    val schemaResults = schemaJobs.awaitAll()
+                    val schema = StringBuilder()
+                    schemaResults.forEach { schema.append(it) }
 
                     dbSchema = schema.toString()
                     systemMessage += "\n\nDB Schema:\n$dbSchema"
+                    
+                    // 사용량 측정: DB 연결 기록
+                    userService.recordDbConnection()
 
                     ApplicationManager.getApplication().invokeLater {
                         println("Debug: Sending success message")
-                        sendMessage("✅ DB 연결 성공. 스키마 정보가 학습되었습니다.", isUser = false)
+                        sendMessage("✅ DB 연결 성공. 스키마 정보(${limitedTableNames.size}개 테이블)가 학습되었습니다.", isUser = false)
                     }
                 }
             } catch (e: Exception) {
                 println("Debug: Error in DB connection: ${e.message}")
+                e.printStackTrace()
                 ApplicationManager.getApplication().invokeLater {
                     sendMessage("❌ DB 연결 실패: ${e.message}", isUser = false)
                 }
             }
         }
+    }
+
+    /**
+     * 특정 테이블의 스키마 정보를 수집합니다.
+     * 성능 최적화: 컬럼, 인덱스, Primary Key, Foreign Key 정보를 효율적으로 수집합니다.
+     * 
+     * @param meta DatabaseMetaData 객체
+     * @param schemaPattern 스키마 패턴
+     * @param tableName 테이블 이름
+     * @return 포맷된 스키마 정보 문자열
+     */
+    private fun collectTableSchemaInfo(meta: java.sql.DatabaseMetaData, schemaPattern: String, tableName: String): String {
+        val tableSchema = StringBuilder("Table: $tableName\n")
+        
+        // 1. 컬럼 정보 수집 (최적화: 최대 20개 컬럼)
+        val columns = mutableListOf<Pair<String, String>>()
+        meta.getColumns(null, schemaPattern, tableName, "%").use { columnsRs ->
+            var columnCount = 0
+            while (columnsRs.next() && columnCount < 20) {
+                val colName = columnsRs.getString("COLUMN_NAME")
+                val colType = columnsRs.getString("TYPE_NAME")
+                val colSize = columnsRs.getString("COLUMN_SIZE")
+                val nullable = columnsRs.getString("IS_NULLABLE")
+                columns.add(Pair(colName, "$colType($colSize)${if (nullable == "NO") " NOT NULL" else ""}"))
+                columnCount++
+            }
+        }
+        
+        // 컬럼 정보 출력
+        columns.forEach { (colName, colInfo) ->
+            tableSchema.append("  - $colName: $colInfo\n")
+        }
+        
+        // 2. Primary Key 정보 수집 (성능 최적화: 인덱스 활용)
+        val primaryKeys = mutableListOf<String>()
+        meta.getPrimaryKeys(null, schemaPattern, tableName).use { pkRs ->
+            while (pkRs.next()) {
+                primaryKeys.add(pkRs.getString("COLUMN_NAME"))
+            }
+        }
+        if (primaryKeys.isNotEmpty()) {
+            tableSchema.append("  Primary Key: ${primaryKeys.joinToString(", ")}\n")
+        }
+        
+        // 3. 인덱스 정보 수집 (성능 최적화 핵심)
+        val indexes = mutableMapOf<String, MutableList<String>>()
+        meta.getIndexInfo(null, schemaPattern, tableName, false, false).use { indexRs ->
+            while (indexRs.next()) {
+                val indexName = indexRs.getString("INDEX_NAME") ?: continue
+                val columnName = indexRs.getString("COLUMN_NAME") ?: continue
+                val nonUnique = indexRs.getBoolean("NON_UNIQUE")
+                val indexType = indexRs.getShort("TYPE")
+                
+                // 인덱스 타입별 분류
+                val indexTypeStr = when (indexType) {
+                    java.sql.DatabaseMetaData.tableIndexStatistic -> "STATISTIC"
+                    java.sql.DatabaseMetaData.tableIndexClustered -> "CLUSTERED"
+                    java.sql.DatabaseMetaData.tableIndexHashed -> "HASHED"
+                    java.sql.DatabaseMetaData.tableIndexOther -> "OTHER"
+                    else -> "UNKNOWN"
+                }
+                
+                if (!indexes.containsKey(indexName)) {
+                    indexes[indexName] = mutableListOf()
+                }
+                
+                val indexInfo = if (nonUnique) {
+                    "$columnName (NON-UNIQUE, $indexTypeStr)"
+                } else {
+                    "$columnName (UNIQUE, $indexTypeStr)"
+                }
+                indexes[indexName]?.add(indexInfo)
+            }
+        }
+        
+        // 인덱스 정보 출력 (성능 분석에 중요)
+        if (indexes.isNotEmpty()) {
+            tableSchema.append("  Indexes:\n")
+            indexes.forEach { (indexName, columns) ->
+                tableSchema.append("    - $indexName: ${columns.joinToString(", ")}\n")
+            }
+        }
+        
+        // 4. Foreign Key 정보 수집 (관계 파악)
+        val foreignKeys = mutableListOf<String>()
+        meta.getImportedKeys(null, schemaPattern, tableName).use { fkRs ->
+            while (fkRs.next()) {
+                val fkColumnName = fkRs.getString("FKCOLUMN_NAME")
+                val pkTableName = fkRs.getString("PKTABLE_NAME")
+                val pkColumnName = fkRs.getString("PKCOLUMN_NAME")
+                foreignKeys.add("$fkColumnName -> $pkTableName.$pkColumnName")
+            }
+        }
+        if (foreignKeys.isNotEmpty()) {
+            tableSchema.append("  Foreign Keys:\n")
+            foreignKeys.forEach { fk ->
+                tableSchema.append("    - $fk\n")
+            }
+        }
+        
+        tableSchema.append("\n")
+        return tableSchema.toString()
     }
 }
