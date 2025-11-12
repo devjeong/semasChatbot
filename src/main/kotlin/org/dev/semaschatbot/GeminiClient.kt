@@ -7,15 +7,21 @@ import com.google.gson.*
 import java.util.concurrent.TimeUnit
 
 /**
- * `GeminiClient`는 Google Gemini API와 통신하는 클라이언트입니다.
- * Gemini API의 generateContent 엔드포인트를 사용하여 챗봇 요청을 보내고 응답을 처리합니다.
+ * `GeminiClient`는 중간 서버를 통해 Google Gemini API와 통신하는 클라이언트입니다.
+ * 폐쇄망 환경에서 외부 Gemini API에 접근하기 위해 중간 서버(프록시)를 사용합니다.
+ * 요청 흐름: 로컬PC → 중간서버 → Gemini API → 중간서버 → 로컬PC
  */
 class GeminiClient(
     private var apiKey: String = ""
 ) {
     
-    // Gemini API 기본 URL (모델명은 동적으로 설정)
-    private val baseUrl = "https://generativelanguage.googleapis.com/v1beta/models"
+    // 중간 서버 기본 URL (기본값: http://192.168.18.53:5000)
+    // Gemini API 프록시는 포트 5000을 사용합니다.
+    private var serverBaseUrl: String = "http://192.168.18.53:5000"
+    
+    // Gemini API 프록시 엔드포인트 (중간 서버의 Gemini 프록시 경로)
+    private val geminiProxyEndpoint = "/api/gemini"
+    
     private val client = OkHttpClient.Builder()
         .connectTimeout(120, TimeUnit.SECONDS)
         .readTimeout(180, TimeUnit.SECONDS)
@@ -23,6 +29,23 @@ class GeminiClient(
         .callTimeout(240, TimeUnit.SECONDS)
         .build()
     private val gson = Gson()
+    
+    /**
+     * 중간 서버의 기본 URL을 설정합니다.
+     * @param url 서버 기본 URL (예: "http://192.168.18.53")
+     */
+    fun setServerBaseUrl(url: String) {
+        serverBaseUrl = url.trim().removeSuffix("/")
+        println("[GeminiClient] 서버 URL 설정: $serverBaseUrl")
+    }
+    
+    /**
+     * 현재 설정된 서버 기본 URL을 반환합니다.
+     * @return 서버 기본 URL
+     */
+    fun getServerBaseUrl(): String {
+        return serverBaseUrl
+    }
     
     /**
      * Gemini API 키를 설정합니다.
@@ -79,12 +102,24 @@ class GeminiClient(
         
         val requestBodyJson = gson.toJson(requestBodyMap)
         
-        // 올바른 엔드포인트 URL 형식: {baseUrl}/{modelId}:generateContent?key={apiKey}
-        val endpointUrl = "$baseUrl/$modelId:generateContent?key=$apiKey"
+        // 중간 서버를 통한 프록시 호출
+        // 요청 본문에 모델 ID와 API Key를 포함하여 전송
+        val proxyRequestBodyMap = mapOf(
+            "modelId" to modelId,
+            "apiKey" to apiKey,
+            "requestBody" to requestBodyMap
+        )
+        val proxyRequestBodyJson = gson.toJson(proxyRequestBodyMap)
+        
+        // 중간 서버의 Gemini 프록시 엔드포인트 URL
+        val endpointUrl = "$serverBaseUrl$geminiProxyEndpoint"
+        
+        println("[GeminiClient] 프록시 호출: $endpointUrl")
+        println("[GeminiClient] 모델 ID: $modelId")
         
         val request = Request.Builder()
             .url(endpointUrl)
-            .post(RequestBody.create("application/json".toMediaTypeOrNull(), requestBodyJson))
+            .post(RequestBody.create("application/json".toMediaTypeOrNull(), proxyRequestBodyJson))
             .build()
         
         try {

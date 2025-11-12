@@ -25,7 +25,8 @@ dependencies {
         create("IC", "2024.1")
         bundledPlugin("com.intellij.java") // Java PSI 지원
         bundledPlugin("org.jetbrains.kotlin") // Kotlin PSI 지원
-        testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
+        // testFramework는 주석 처리 - 표준 JUnit 5 사용
+        // testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
         // Add necessary plugin dependencies for compilation here, example:
         // bundledPlugin("com.intellij.java")
@@ -41,6 +42,11 @@ dependencies {
         exclude(group = "org.slf4j", module = "slf4j-simple")
         exclude(group = "org.slf4j", module = "slf4j-nop")
     }
+    
+    // JUnit 5 테스트 프레임워크
+    testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.0")
+    testImplementation("org.junit.jupiter:junit-jupiter-engine:5.10.0")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.0")
 }
 
 intellijPlatform {
@@ -87,5 +93,12 @@ tasks {
     patchPluginXml {
         sinceBuild.set("241") // 2024.1 버전부터 호환
         untilBuild.set("252.*") // 2025.1 버전의 모든 릴리스까지 호환
+    }
+    
+    // JUnit 5 테스트 설정
+    withType<Test> {
+        useJUnitPlatform()
+        // 테스트에서 제외할 패턴 (ManualTest는 테스트가 아님)
+        exclude("**/GeminiApiEndpointManualTest.class")
     }
 }

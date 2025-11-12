@@ -307,20 +307,116 @@ class ChatService(private val project: Project) {
         }
     }
 
+    // 서버 URL 관리 (기본값: 192.168.18.53)
+    // 주의: 서버 기본 URL은 호스트만 포함하며, 포트는 각 서비스별로 다릅니다.
+    // - LM Studio: {서버URL}:7777/v1
+    // - Gemini API: {서버URL}:5000/api/gemini
+    @Volatile
+    private var serverBaseUrl: String = "http://192.168.18.53"
+    
     /**
-     * LmStudio 서버의 URL을 설정합니다.
-     * @param url 새로운 서버 URL
+     * 서버 기본 URL을 설정합니다.
+     * 이 URL은 LM Studio와 Gemini API 프록시의 기본 주소로 사용됩니다.
+     * 포트는 포함하지 않으며, 각 서비스별로 자동으로 추가됩니다.
+     * @param url 새로운 서버 기본 URL (예: "http://192.168.18.53")
      */
-    fun setLmStudioUrl(url: String) {
-        apiClient.setBaseUrl(url)
+    fun setServerBaseUrl(url: String) {
+        var cleanedUrl = url.trim().removeSuffix("/")
+        
+        // 포트가 포함된 경우 제거 (호스트만 저장)
+        // 예: http://192.168.18.53:5000 -> http://192.168.18.53
+        val portPattern = Regex(":\\d+$")
+        cleanedUrl = cleanedUrl.replace(portPattern, "")
+        
+        serverBaseUrl = cleanedUrl
+        
+        // LM Studio URL 자동 업데이트: {서버URL}:7777/v1
+        val lmStudioUrl = "$cleanedUrl:7777/v1"
+        apiClient.setBaseUrl(lmStudioUrl)
+        
+        // Gemini Client에 서버 URL 설정 (포트 5000 포함)
+        val geminiServerUrl = "$cleanedUrl:5000"
+        geminiClient.setServerBaseUrl(geminiServerUrl)
+        
+        // 설정 저장
+        saveServerSettings()
+        println("[ChatService] 서버 URL이 변경되었습니다: $cleanedUrl")
+        println("[ChatService] LM Studio URL: $lmStudioUrl")
+        println("[ChatService] Gemini API URL: $geminiServerUrl/api/gemini")
     }
-
+    
     /**
-     * 현재 설정된 LmStudio 서버 URL을 반환합니다.
-     * @return 현재 서버 URL
+     * 현재 설정된 서버 기본 URL을 반환합니다.
+     * @return 현재 서버 기본 URL
+     */
+    fun getServerBaseUrl(): String {
+        return serverBaseUrl
+    }
+    
+    /**
+     * 현재 설정된 LM Studio URL을 반환합니다.
+     * @return 현재 LM Studio URL ({서버URL}:7777/v1)
      */
     fun getLmStudioUrl(): String {
         return apiClient.getBaseUrl()
+    }
+    
+    /**
+     * 서버 설정을 파일에 저장합니다.
+     */
+    private fun saveServerSettings() {
+        try {
+            val configFile = File(project.basePath ?: System.getProperty("user.home"), ".semas-chatbot/server.properties")
+            configFile.parentFile?.mkdirs()
+            val props = Properties()
+            props.setProperty("server.baseUrl", serverBaseUrl)
+            configFile.outputStream().use { props.store(it, "Server Settings") }
+        } catch (e: Exception) {
+            println("서버 설정 저장 오류: ${e.message}")
+        }
+    }
+    
+    /**
+     * 서버 설정을 파일에서 로드합니다.
+     */
+    private fun loadServerSettings() {
+        try {
+            val configFile = File(project.basePath ?: System.getProperty("user.home"), ".semas-chatbot/server.properties")
+            if (configFile.exists()) {
+                val props = Properties()
+                configFile.inputStream().use { props.load(it) }
+                val savedUrl = props.getProperty("server.baseUrl", "")
+                if (savedUrl.isNotBlank()) {
+                    // 포트가 포함된 경우 제거 (호스트만 저장)
+                    var cleanedUrl = savedUrl.trim().removeSuffix("/")
+                    val portPattern = Regex(":\\d+$")
+                    cleanedUrl = cleanedUrl.replace(portPattern, "")
+                    
+                    serverBaseUrl = cleanedUrl
+                    // LM Studio URL 자동 구성: {서버URL}:7777/v1
+                    val lmStudioUrl = "$cleanedUrl:7777/v1"
+                    apiClient.setBaseUrl(lmStudioUrl)
+                    // Gemini Client에 서버 URL 설정 (포트 5000 포함)
+                    val geminiServerUrl = "$cleanedUrl:5000"
+                    geminiClient.setServerBaseUrl(geminiServerUrl)
+                }
+            } else {
+                // 기본값 설정
+                val lmStudioUrl = "$serverBaseUrl:7777/v1"
+                apiClient.setBaseUrl(lmStudioUrl)
+                // Gemini는 포트 5000 사용
+                val geminiServerUrl = "$serverBaseUrl:5000"
+                geminiClient.setServerBaseUrl(geminiServerUrl)
+            }
+        } catch (e: Exception) {
+            println("서버 설정 로드 오류: ${e.message}")
+            // 오류 발생 시 기본값 사용
+            val lmStudioUrl = "$serverBaseUrl:7777/v1"
+            apiClient.setBaseUrl(lmStudioUrl)
+            // Gemini는 포트 5000 사용
+            val geminiServerUrl = "$serverBaseUrl:5000"
+            geminiClient.setServerBaseUrl(geminiServerUrl)
+        }
     }
 
     // Gemini API 설정 관리
@@ -337,51 +433,48 @@ class ChatService(private val project: Project) {
     
     /**
      * Gemini API Key를 설정합니다.
+     * 주의: 이 메서드는 런타임에 API Key를 변경할 때만 사용됩니다.
+     * 일반적으로는 config.properties 파일에서 자동으로 로드됩니다.
      * @param apiKey API Key
      */
     fun setGeminiApiKey(apiKey: String) {
         geminiApiKey = apiKey.trim()
         geminiClient.setApiKey(geminiApiKey)
-        // 설정 저장
-        saveGeminiSettings()
     }
     
     /**
-     * Gemini 설정을 파일에 저장합니다.
-     */
-    private fun saveGeminiSettings() {
-        try {
-            val configFile = File(project.basePath ?: System.getProperty("user.home"), ".semas-chatbot/gemini.properties")
-            configFile.parentFile?.mkdirs()
-            val props = Properties()
-            props.setProperty("gemini.apiKey", geminiApiKey)
-            configFile.outputStream().use { props.store(it, "Gemini API Settings") }
-        } catch (e: Exception) {
-            println("Gemini 설정 저장 오류: ${e.message}")
-        }
-    }
-    
-    /**
-     * Gemini 설정을 파일에서 로드합니다.
+     * Gemini 설정을 config.properties 파일에서 로드합니다.
+     * config.properties는 빌드 시점에 리소스로 포함되므로 런타임에 수정할 수 없습니다.
      */
     private fun loadGeminiSettings() {
         try {
-            val configFile = File(project.basePath ?: System.getProperty("user.home"), ".semas-chatbot/gemini.properties")
-            if (configFile.exists()) {
+            // 리소스 파일에서 config.properties 읽기
+            val inputStream = ChatService::class.java.classLoader.getResourceAsStream("config.properties")
+                ?: ChatService::class.java.getResourceAsStream("/config.properties")
+            
+            if (inputStream != null) {
                 val props = Properties()
-                configFile.inputStream().use { props.load(it) }
-                geminiApiKey = props.getProperty("gemini.apiKey", "")
+                inputStream.use { props.load(it) }
+                geminiApiKey = props.getProperty("gemini.apiKey", "").trim()
+                
                 if (geminiApiKey.isNotBlank()) {
                     geminiClient.setApiKey(geminiApiKey)
+                    println("[ChatService] Gemini API Key가 config.properties에서 로드되었습니다.")
+                } else {
+                    println("[ChatService] 경고: config.properties에 gemini.apiKey가 설정되지 않았습니다.")
                 }
+            } else {
+                println("[ChatService] 경고: config.properties 파일을 찾을 수 없습니다.")
             }
         } catch (e: Exception) {
             println("Gemini 설정 로드 오류: ${e.message}")
+            e.printStackTrace()
         }
     }
     
     init {
-        // 초기화 시 설정 로드
+        // 초기화 시 설정 로드 (순서 중요: 서버 URL 먼저, 그 다음 Gemini)
+        loadServerSettings()
         loadGeminiSettings()
     }
 
@@ -1377,7 +1470,7 @@ class ChatService(private val project: Project) {
             if (geminiApiKey.isBlank()) {
                 ApplicationManager.getApplication().invokeLater {
                     loadingIndicator?.isVisible = false
-                    sendMessage("❌ Gemini 모델을 사용하려면 API Key가 필요합니다. 모델 선택 시 API Key를 입력해주세요.", isUser = false)
+                    sendMessage("❌ Gemini 모델을 사용하려면 config.properties 파일에 gemini.apiKey를 설정해주세요.\n설정 위치: src/main/resources/config.properties", isUser = false)
                     clearCursorContext()
                 }
                 return

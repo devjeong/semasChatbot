@@ -228,21 +228,36 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
 
         // 'URL' 버튼 클릭 시 동작을 정의합니다.
         urlButton.addActionListener {
-            val currentUrl = chatService.getLmStudioUrl()
+            val currentServerUrl = chatService.getServerBaseUrl()
+            val currentLmStudioUrl = chatService.getLmStudioUrl()
 
             // URL 입력을 위한 JTextField 생성
             val urlField = JTextField(50) // 50자 크기의 JTextField
-            urlField.text = currentUrl
+            urlField.text = currentServerUrl
             urlField.font = Font("Monospaced", Font.PLAIN, 12)
 
             // 설명 레이블 생성
-            val descriptionLabel = JLabel("LmStudio 서버 URL을 설정하세요:")
+            val descriptionLabel = JLabel("서버 기본 URL을 설정하세요:")
             descriptionLabel.font = Font("SansSerif", Font.PLAIN, 12)
 
+            // 안내 레이블 생성
+            val infoLabel = JLabel("<html>이 URL은 LM Studio와 Gemini API 프록시의 기본 주소로 사용됩니다.<br>" +
+                    "• LM Studio: {서버URL}:7777/v1<br>" +
+                    "• Gemini API: {서버URL}:5000/api/gemini</html>")
+            infoLabel.font = Font("SansSerif", Font.PLAIN, 11)
+            infoLabel.foreground = Color.GRAY
+
             // 예시 레이블 생성
-            val exampleLabel = JLabel("예시: http://192.168.18.52:1234/v1")
+            val exampleLabel = JLabel("예시: http://192.168.18.53 (포트는 자동으로 추가됩니다)")
             exampleLabel.font = Font("SansSerif", Font.ITALIC, 11)
             exampleLabel.foreground = Color.GRAY
+
+            // 현재 설정 표시 레이블
+            val currentGeminiUrl = chatService.getServerBaseUrl() + ":5000/api/gemini"
+            val currentLabel = JLabel("<html>현재 LM Studio URL: $currentLmStudioUrl<br>" +
+                    "현재 Gemini API URL: $currentGeminiUrl</html>")
+            currentLabel.font = Font("SansSerif", Font.PLAIN, 10)
+            currentLabel.foreground = Color.DARK_GRAY
 
             // 패널 구성
             val urlPanel = JPanel()
@@ -251,13 +266,17 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             urlPanel.add(Box.createVerticalStrut(5))
             urlPanel.add(urlField)
             urlPanel.add(Box.createVerticalStrut(5))
+            urlPanel.add(infoLabel)
+            urlPanel.add(Box.createVerticalStrut(5))
             urlPanel.add(exampleLabel)
+            urlPanel.add(Box.createVerticalStrut(5))
+            urlPanel.add(currentLabel)
 
             // JOptionPane을 사용하여 다이얼로그 표시
             val result = JOptionPane.showConfirmDialog(
                 panel,
                 urlPanel,
-                "LmStudio URL 설정",
+                "서버 URL 설정",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.PLAIN_MESSAGE
             )
@@ -269,8 +288,12 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                     // URL 유효성 검증
                     try {
                         val url = URI(newUrl).toURL()
-                        chatService.setLmStudioUrl(newUrl)
-                        chatService.sendMessage("LmStudio URL이 변경되었습니다: $newUrl", isUser = false)
+                        chatService.setServerBaseUrl(newUrl)
+                        val updatedLmStudioUrl = chatService.getLmStudioUrl()
+                        val updatedGeminiUrl = chatService.getServerBaseUrl() + ":5000/api/gemini"
+                        chatService.sendMessage("서버 URL이 변경되었습니다: $newUrl\n" +
+                                "LM Studio URL: $updatedLmStudioUrl\n" +
+                                "Gemini API URL: $updatedGeminiUrl", isUser = false)
                     } catch (e: Exception) {
                         chatService.sendMessage("유효하지 않은 URL입니다: ${e.message}", isUser = false)
                         JOptionPane.showMessageDialog(
@@ -281,8 +304,8 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                         )
                     }
                 }
-                         }
-         }
+            }
+        }
 
         // 'Auth' 버튼 클릭 시 동작을 정의합니다.
         authButton.addActionListener {
@@ -556,19 +579,19 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                 val geminiModelId = selectedModel.removePrefix("💎 ").trim()
                 val geminiApiKey = chatService.getGeminiApiKey()
                 
-                // API Key가 없으면 설정 다이얼로그 표시
+                // API Key가 없으면 에러 메시지 표시 및 기본 모델로 되돌림
                 if (geminiApiKey.isBlank()) {
-                    showGeminiApiKeyDialog(panel, chatService, geminiModelId) { apiKey ->
-                        if (apiKey.isNotBlank()) {
-                            chatService.setGeminiApiKey(apiKey)
-                            chatService.setSelectedModel(selectedModel)
-                            chatService.sendMessage("Gemini 모델 '$geminiModelId'이 선택되었습니다.", isUser = false)
-                        } else {
-                            // API Key를 입력하지 않으면 기본 모델로 되돌림
-                            modelCombo.selectedItem = "default-model"
-                            chatService.setSelectedModel("default-model")
-                        }
-                    }
+                    modelCombo.selectedItem = "default-model"
+                    chatService.setSelectedModel("default-model")
+                    chatService.sendMessage("❌ Gemini 모델을 사용하려면 config.properties 파일에 gemini.apiKey를 설정해주세요.", isUser = false)
+                    JOptionPane.showMessageDialog(
+                        panel,
+                        "Gemini 모델을 사용하려면 config.properties 파일에 gemini.apiKey를 설정해주세요.\n\n" +
+                        "설정 위치: src/main/resources/config.properties\n" +
+                        "예시: gemini.apiKey=YOUR_API_KEY",
+                        "Gemini API Key 필요",
+                        JOptionPane.WARNING_MESSAGE
+                    )
                 } else {
                     chatService.setSelectedModel(selectedModel)
                     chatService.sendMessage("Gemini 모델 '$geminiModelId'이 선택되었습니다.", isUser = false)
@@ -580,70 +603,6 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         }
     }
     
-    /**
-     * Gemini API Key 설정 다이얼로그를 표시합니다.
-     */
-    private fun showGeminiApiKeyDialog(
-        parentComponent: JPanel,
-        chatService: ChatService,
-        modelId: String,
-        onComplete: (String) -> Unit
-    ) {
-        val geminiApiKey = chatService.getGeminiApiKey()
-        
-        // Gemini 설정 패널 생성
-        val geminiPanel = JPanel()
-        geminiPanel.layout = BoxLayout(geminiPanel, BoxLayout.Y_AXIS)
-        geminiPanel.border = EmptyBorder(10, 10, 10, 10)
-        
-        // 설명 레이블
-        val descriptionLabel = JLabel("<html>Gemini 모델 '$modelId'을 사용하려면 API Key가 필요합니다.<br><br>Gemini API Key를 입력해주세요:</html>")
-        descriptionLabel.font = Font("SansSerif", Font.PLAIN, 12)
-        
-        // API Key 입력 필드
-        val apiKeyLabel = JLabel("Gemini API Key:")
-        val apiKeyField = JPasswordField(40)
-        apiKeyField.text = geminiApiKey
-        
-        // 설명 레이블
-        val helpLabel = JLabel("<html>Gemini API Key는 Google AI Studio에서 발급받을 수 있습니다.<br>https://makersuite.google.com/app/apikey</html>")
-        helpLabel.font = Font("SansSerif", Font.PLAIN, 11)
-        helpLabel.foreground = Color.GRAY
-        
-        geminiPanel.add(descriptionLabel)
-        geminiPanel.add(Box.createVerticalStrut(10))
-        geminiPanel.add(apiKeyLabel)
-        geminiPanel.add(apiKeyField)
-        geminiPanel.add(Box.createVerticalStrut(5))
-        geminiPanel.add(helpLabel)
-        
-        // 다이얼로그 표시
-        val result = JOptionPane.showConfirmDialog(
-            parentComponent,
-            geminiPanel,
-            "Gemini API Key 입력",
-            JOptionPane.OK_CANCEL_OPTION,
-            JOptionPane.PLAIN_MESSAGE
-        )
-        
-        // 사용자가 OK를 눌렀을 경우
-        if (result == JOptionPane.OK_OPTION) {
-            val apiKey = String(apiKeyField.password).trim()
-            if (apiKey.isBlank()) {
-                JOptionPane.showMessageDialog(
-                    parentComponent,
-                    "API Key를 입력해주세요.",
-                    "입력 오류",
-                    JOptionPane.WARNING_MESSAGE
-                )
-                onComplete("")
-            } else {
-                onComplete(apiKey)
-            }
-        } else {
-            onComplete("")
-        }
-    }
 
     /**
      * 모던한 스타일의 버튼을 생성하는 함수입니다.
