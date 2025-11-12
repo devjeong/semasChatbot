@@ -249,6 +249,12 @@ class ChatService(private val project: Project) {
 
     // 외부 파일 수정 제안을 관리하기 위한 변수
     private var pendingExternalFileEdit: PendingExternalFileEdit? = null
+    
+    // 작업 모드 관련 변수
+    private var currentTaskSession: org.dev.semaschatbot.task.TaskSession? = null
+    private var taskStateMachine: org.dev.semaschatbot.task.TaskExecutionStateMachine? = null
+    private var taskHistoryManager: org.dev.semaschatbot.task.TaskHistoryManager? = null
+    private var taskHistoryFile: java.io.File? = null
 
     // 사용자 서비스 (회원인증 및 사용량 관리)
     private val userService = UserService(project)
@@ -1219,6 +1225,12 @@ class ChatService(private val project: Project) {
         // 로그인 체크
         if (!isUserAuthenticated()) {
             sendMessage("❌ 로그인이 필요합니다. 로그인해주세요.", isUser = false)
+            return
+        }
+        
+        // 작업 모드 감지
+        if (isTaskModeRequest(userInput)) {
+            enterTaskMode(userInput)
             return
         }
         
@@ -4491,5 +4503,414 @@ button:hover {
         
         tableSchema.append("\n")
         return tableSchema.toString()
+    }
+    
+    // ==================== 작업 모드 관련 메서드 ====================
+    
+    /**
+     * 작업 모드 요청인지 감지합니다.
+     * 
+     * @param userInput 사용자 입력
+     * @return 작업 모드 요청이면 true
+     */
+    private fun isTaskModeRequest(userInput: String): Boolean {
+        val taskKeywords = listOf(
+            "작업 목록", "작업목록", "할 일", "todo", "task list",
+            "단계별", "순서대로", "단계로", "단계별로"
+        )
+        
+        val input = userInput.lowercase()
+        return taskKeywords.any { input.contains(it) } ||
+               (input.contains("구현") && input.length > 50) || // 긴 구현 요청
+               (input.contains("만들") && input.contains("기능"))
+    }
+    
+    /**
+     * 작업 모드로 진입합니다.
+     * 작업목록을 생성하고 사용자에게 표시합니다.
+     * 
+     * @param requirement 사용자 요구사항
+     */
+    private fun enterTaskMode(requirement: String) {
+        sendMessage(requirement, isUser = true)
+        sendMessage("📋 작업 목록을 생성하는 중입니다...", isUser = false)
+        
+        // 작업 이력 관리자 초기화
+        if (taskHistoryManager == null) {
+            taskHistoryManager = org.dev.semaschatbot.task.TaskHistoryManager(project)
+        }
+        
+        // 비동기로 작업목록 생성
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                // 선택된 모델 확인 (Gemini 모델인 경우에만 사용)
+                val selectedModelId = getSelectedModel()
+                val geminiModelId = if (isGeminiModel(selectedModelId)) {
+                    selectedModelId.removePrefix("💎 ").trim()
+                } else {
+                    "gemini-1.5-flash" // 기본값 사용
+                }
+                
+                // 현재 로그인한 사용자 ID 가져오기
+                val currentUserId = try {
+                    userService.getCurrentUser()?.id
+                } catch (e: Exception) {
+                    null
+                }
+                
+                val taskListGenerator = org.dev.semaschatbot.task.TaskListGenerator(geminiClient)
+                val tasks = taskListGenerator.generateTaskList(requirement, geminiModelId, currentUserId)
+                
+                val session = org.dev.semaschatbot.task.TaskSession(
+                    id = java.util.UUID.randomUUID().toString(),
+                    requirement = requirement,
+                    tasks = tasks.toMutableList()
+                )
+                
+                // 파일 저장
+                val savedFile = taskHistoryManager!!.saveTaskSession(session)
+                
+                // UI 업데이트 (EDT 스레드에서)
+                ApplicationManager.getApplication().invokeLater {
+                    displayTaskList(session, savedFile)
+                }
+            } catch (e: Exception) {
+                ApplicationManager.getApplication().invokeLater {
+                    sendMessage("❌ 작업 목록 생성 중 오류가 발생했습니다: ${e.message}", isUser = false)
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+    
+    /**
+     * 작업목록을 채팅창에 표시합니다.
+     * 
+     * @param session 작업 세션
+     * @param savedFile 저장된 파일
+     */
+    private fun displayTaskList(session: org.dev.semaschatbot.task.TaskSession, savedFile: java.io.File) {
+        currentTaskSession = session
+        taskHistoryFile = savedFile
+        
+        // 작업목록 패널 생성
+        val taskListPanel = org.dev.semaschatbot.ui.TaskListPanel(
+            session = session,
+            savedFile = savedFile,
+            onApprove = {
+                approveTaskSession()
+            },
+            onCancel = {
+                cancelTaskSession()
+            }
+        )
+        
+        // 채팅창에 추가
+        chatPanel?.let { panel ->
+            if (panel.componentCount > 0) {
+                panel.add(Box.createVerticalStrut(8))
+            }
+            panel.add(taskListPanel)
+            panel.revalidate()
+            panel.repaint()
+            scrollToBottom()
+        }
+    }
+    
+    /**
+     * 작업 세션을 승인하고 실행을 시작합니다.
+     */
+    private fun approveTaskSession() {
+        val session = currentTaskSession ?: return
+        
+        session.status = org.dev.semaschatbot.task.SessionStatus.APPROVED
+        taskStateMachine = org.dev.semaschatbot.task.TaskExecutionStateMachine(session)
+        
+        sendMessage("✅ 작업을 시작합니다. 총 ${session.getTotalCount()}개의 작업이 있습니다.", isUser = false)
+        
+        // 첫 번째 작업 시작
+        executeNextTask()
+    }
+    
+    /**
+     * 다음 작업을 실행합니다.
+     */
+    private fun executeNextTask() {
+        val stateMachine = taskStateMachine ?: return
+        val session = currentTaskSession ?: return
+        
+        val nextTask = stateMachine.moveToNextTask()
+        if (nextTask == null) {
+            sendMessage("✅ 모든 작업이 완료되었습니다!", isUser = false)
+            session.status = org.dev.semaschatbot.task.SessionStatus.COMPLETED
+            updateTaskHistoryFile()
+            return
+        }
+        
+        sendMessage("🔄 작업 진행 중: ${nextTask.title} (${stateMachine.getCompletedTasks().size + 1}/${session.getTotalCount()})", isUser = false)
+        
+        // 작업별 프롬프트 생성
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                // 선택된 모델 확인 (Gemini 모델인 경우에만 사용)
+                val selectedModelId = getSelectedModel()
+                val geminiModelId = if (isGeminiModel(selectedModelId)) {
+                    selectedModelId.removePrefix("💎 ").trim()
+                } else {
+                    "gemini-1.5-flash" // 기본값 사용
+                }
+                
+                // 현재 로그인한 사용자 ID 가져오기
+                val currentUserId = try {
+                    userService.getCurrentUser()?.id
+                } catch (e: Exception) {
+                    null
+                }
+                
+                val promptGenerator = org.dev.semaschatbot.task.TaskPromptGenerator(geminiClient)
+                val completedTasks = stateMachine.getCompletedTasks()
+                val prompt = promptGenerator.generatePromptForTask(nextTask, session.requirement, completedTasks, geminiModelId, currentUserId)
+                
+                if (prompt != null) {
+                    nextTask.prompt = prompt
+                    
+                    // 프롬프트 승인 UI 표시
+                    ApplicationManager.getApplication().invokeLater {
+                        displayPromptApproval(nextTask, prompt)
+                    }
+                } else {
+                    ApplicationManager.getApplication().invokeLater {
+                        stateMachine.failCurrentTask("프롬프트 생성 실패")
+                        sendMessage("❌ 프롬프트 생성에 실패했습니다.", isUser = false)
+                        executeNextTask() // 다음 작업으로 진행
+                    }
+                }
+            } catch (e: Exception) {
+                ApplicationManager.getApplication().invokeLater {
+                    stateMachine.failCurrentTask(e.message ?: "알 수 없는 오류")
+                    sendMessage("❌ 프롬프트 생성 중 오류 발생: ${e.message}", isUser = false)
+                    executeNextTask() // 다음 작업으로 진행
+                }
+            }
+        }
+    }
+    
+    /**
+     * 프롬프트 승인 UI를 표시합니다.
+     * 
+     * @param task 현재 작업
+     * @param prompt 생성된 프롬프트
+     */
+    private fun displayPromptApproval(task: org.dev.semaschatbot.task.Task, prompt: String) {
+        val promptPanel = org.dev.semaschatbot.ui.PromptApprovalPanel(
+            task = task,
+            prompt = prompt,
+            onApprove = {
+                // '진행' 버튼 클릭 시 작업 실행
+                executeTaskWithSelectedModel(task, prompt)
+            },
+            onCancel = {
+                // '취소' 버튼 클릭 시 전체 작업 취소
+                cancelTaskSession()
+            }
+        )
+        
+        // 채팅창에 추가
+        chatPanel?.let { panel ->
+            if (panel.componentCount > 0) {
+                panel.add(Box.createVerticalStrut(8))
+            }
+            panel.add(promptPanel)
+            panel.revalidate()
+            panel.repaint()
+            scrollToBottom()
+        }
+    }
+    
+    /**
+     * 선택된 모델에 따라 작업을 실행합니다.
+     * 
+     * @param task 실행할 작업
+     * @param prompt 실행할 프롬프트
+     */
+    private fun executeTaskWithSelectedModel(task: org.dev.semaschatbot.task.Task, prompt: String) {
+        val modelId = getSelectedModel()
+        val systemMessage = "" // 필요시 시스템 메시지 추가
+        
+        // 현재 로그인한 사용자 ID 가져오기
+        val currentUserId = try {
+            userService.getCurrentUser()?.id
+        } catch (e: Exception) {
+            null
+        }
+        
+        sendMessage("⚙️ 작업 실행 중... (모델: $modelId)", isUser = false)
+        
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                val result = if (isGeminiModel(modelId)) {
+                    // Gemini API 호출
+                    val actualModelId = modelId.removePrefix("💎 ").trim()
+                    geminiClient.sendChatRequest(
+                        userMessage = prompt,
+                        systemMessage = systemMessage,
+                        modelId = actualModelId,
+                        userId = currentUserId
+                    ) ?: "오류: Gemini API 응답이 null입니다."
+                } else {
+                    // LM Studio API 호출
+                    apiClient.sendChatRequest(
+                        userMessage = prompt,
+                        systemMessage = systemMessage,
+                        modelId = modelId
+                    ) ?: "오류: LM Studio API 응답이 null입니다."
+                }
+                
+                ApplicationManager.getApplication().invokeLater {
+                    task.result = result
+                    displayTaskResult(task, result)
+                }
+            } catch (e: Exception) {
+                ApplicationManager.getApplication().invokeLater {
+                    task.status = org.dev.semaschatbot.task.TaskStatus.FAILED
+                    task.result = "오류: ${e.message}"
+                    sendMessage("❌ 작업 실행 중 오류 발생: ${e.message}", isUser = false)
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+    
+    /**
+     * 작업 결과를 표시합니다.
+     * 
+     * @param task 완료된 작업
+     * @param result 작업 실행 결과
+     */
+    private fun displayTaskResult(task: org.dev.semaschatbot.task.Task, result: String) {
+        val resultPanel = org.dev.semaschatbot.ui.TaskResultPanel(
+            task = task,
+            result = result,
+            onComplete = {
+                // '완료' 버튼 클릭 시 다음 작업으로 진행
+                handleTaskComplete()
+            },
+            onCancel = {
+                // '취소' 버튼 클릭 시 전체 작업 취소
+                handleTaskCancelFromResult()
+            }
+        )
+        
+        // 채팅창에 추가
+        chatPanel?.let { panel ->
+            if (panel.componentCount > 0) {
+                panel.add(Box.createVerticalStrut(8))
+            }
+            panel.add(resultPanel)
+            panel.revalidate()
+            panel.repaint()
+            scrollToBottom()
+        }
+    }
+    
+    /**
+     * 작업 완료 처리를 수행합니다.
+     */
+    private fun handleTaskComplete() {
+        val stateMachine = taskStateMachine ?: return
+        val session = currentTaskSession ?: return
+        
+        // 현재 작업 완료 처리
+        val currentTask = stateMachine.getCurrentTask()
+        currentTask?.let {
+            stateMachine.completeCurrentTask(it.result ?: "")
+        }
+        
+        // .md 파일 업데이트
+        updateTaskHistoryFile()
+        
+        // 다음 작업 확인
+        if (stateMachine.isAllCompleted()) {
+            sendMessage("✅ 모든 작업이 완료되었습니다!", isUser = false)
+            session.status = org.dev.semaschatbot.task.SessionStatus.COMPLETED
+            updateTaskHistoryFile()
+        } else {
+            // 다음 작업으로 진행
+            executeNextTask()
+        }
+    }
+    
+    /**
+     * 작업 취소 처리 (결과 단계에서)
+     */
+    private fun handleTaskCancelFromResult() {
+        cancelTaskSession()
+    }
+    
+    
+    /**
+     * 작업 세션을 취소합니다.
+     */
+    private fun cancelTaskSession() {
+        val session = currentTaskSession ?: return
+        val historyFile = taskHistoryFile
+        
+        taskStateMachine?.cancelSession()
+        sendMessage("❌ 작업 세션이 취소되었습니다.", isUser = false)
+        
+        // .md 파일 삭제
+        if (historyFile != null && taskHistoryManager != null) {
+            val deleted = taskHistoryManager!!.deleteTaskSessionFile(historyFile)
+            if (deleted) {
+                sendMessage("🗑️ 작업 이력 파일이 삭제되었습니다.", isUser = false)
+            } else {
+                sendMessage("⚠️ 작업 이력 파일 삭제에 실패했습니다.", isUser = false)
+            }
+        }
+        
+        currentTaskSession = null
+        taskStateMachine = null
+        taskHistoryFile = null
+    }
+    
+    /**
+     * 특정 작업을 취소합니다.
+     * 
+     * @param taskId 취소할 작업 ID
+     */
+    fun cancelTask(taskId: String) {
+        val stateMachine = taskStateMachine ?: return
+        val task = stateMachine.cancelTask(taskId)
+        
+        if (task == null) {
+            sendMessage("❌ 작업을 찾을 수 없습니다.", isUser = false)
+            return
+        }
+        
+        sendMessage("✅ 작업 '${task.title}'이(가) 취소되었습니다.", isUser = false)
+        updateTaskHistoryFile()
+        
+        // 다음 작업으로 진행
+        val nextTask = stateMachine.moveToNextTask()
+        if (nextTask != null) {
+            executeNextTask()
+        } else {
+            sendMessage("모든 작업이 완료되거나 취소되었습니다.", isUser = false)
+        }
+    }
+    
+    /**
+     * 작업 이력 파일을 업데이트합니다.
+     */
+    private fun updateTaskHistoryFile() {
+        val session = currentTaskSession ?: return
+        val historyManager = taskHistoryManager ?: return
+        val historyFile = taskHistoryFile ?: return
+        
+        try {
+            historyManager.updateTaskSession(session, historyFile)
+        } catch (e: Exception) {
+            println("[ChatService] 작업 이력 파일 업데이트 실패: ${e.message}")
+        }
     }
 }
