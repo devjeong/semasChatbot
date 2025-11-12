@@ -11,10 +11,10 @@ import java.util.concurrent.TimeUnit
  * LM Studio 모델 사용 시 수집된 통계 정보를 서버로 전송합니다.
  * 비동기 처리로 사용자 경험에 영향을 주지 않습니다.
  * 
- * @param serverBaseUrl 서버 기본 URL (기본값: "http://192.168.18.53")
+ * @param serverBaseUrl 서버 기본 URL (기본값: "http://192.168.18.53:5000")
  */
 class LmStudioStatsApiClient(
-    private var serverBaseUrl: String = "http://192.168.18.53"
+    private var serverBaseUrl: String = "http://192.168.18.53:5000"
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -113,7 +113,7 @@ class LmStudioStatsApiClient(
                 }
             }
             if (!success) {
-                println("[LmStudioStatsApiClient] 통계 전송 실패 (모든 재시도 실패, 총 $maxRetries회 시도)")
+                println("[LmStudioStatsApiClient] 통계 전송 실패 (모든 재시도 실패, 총 ${maxRetries}회 시도)")
             }
         }.start()
     }

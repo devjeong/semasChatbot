@@ -287,7 +287,7 @@ class ChatService(private val project: Project) {
     
     /**
      * 모델 ID에서 실제 Gemini 모델명을 추출합니다.
-     * @param modelId 선택된 모델 ID (예: "💎 gemini-1.5-flash")
+     * @param modelId 선택된 모델 ID (예: "💎 gemini-2.5-flash")
      * @return 실제 모델명 (예: "gemini-1.5-flash")
      */
     private fun extractGeminiModelId(modelId: String): String {
@@ -353,12 +353,17 @@ class ChatService(private val project: Project) {
             println("[ChatService] UserService 업데이트 실패: ${e.message}")
         }
         
+        // LM Studio 통계 전송 API 클라이언트에도 서버 URL 동기화 (포트 5000 포함)
+        val statsServerUrl = "$cleanedUrl:5000"
+        lmStudioStatsApiClient.setServerBaseUrl(statsServerUrl)
+        
         // 설정 저장
         saveServerSettings()
         println("[ChatService] 서버 URL이 변경되었습니다: $cleanedUrl")
         println("[ChatService] LM Studio URL: $lmStudioUrl")
         println("[ChatService] Gemini API URL: $geminiServerUrl/api/gemini")
         println("[ChatService] 인증 API URL: $cleanedUrl:5000/api/auth")
+        println("[ChatService] 통계 전송 API URL: $statsServerUrl/api/lm-studio/stats")
     }
     
     /**
@@ -423,6 +428,10 @@ class ChatService(private val project: Project) {
                     } catch (e: Exception) {
                         println("[ChatService] UserService 업데이트 실패: ${e.message}")
                     }
+                    
+                    // LM Studio 통계 전송 API 클라이언트에도 서버 URL 동기화 (포트 5000 포함)
+                    val statsServerUrl = "$cleanedUrl:5000"
+                    lmStudioStatsApiClient.setServerBaseUrl(statsServerUrl)
                 }
             } else {
                 // 기본값 설정
@@ -439,6 +448,10 @@ class ChatService(private val project: Project) {
                 } catch (e: Exception) {
                     println("[ChatService] UserService 업데이트 실패: ${e.message}")
                 }
+                
+                // LM Studio 통계 전송 API 클라이언트에도 서버 URL 동기화 (포트 5000 포함)
+                val statsServerUrl = "$serverBaseUrl:5000"
+                lmStudioStatsApiClient.setServerBaseUrl(statsServerUrl)
             }
         } catch (e: Exception) {
             println("서버 설정 로드 오류: ${e.message}")
@@ -448,6 +461,9 @@ class ChatService(private val project: Project) {
             // Gemini는 포트 5000 사용
             val geminiServerUrl = "$serverBaseUrl:5000"
             geminiClient.setServerBaseUrl(geminiServerUrl)
+            
+            // LM Studio 통계 전송 API 클라이언트에도 서버 URL 동기화
+            lmStudioStatsApiClient.setServerBaseUrl(serverBaseUrl)
         }
     }
 
@@ -4560,13 +4576,8 @@ button:hover {
         // 비동기로 작업목록 생성
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
-                // 선택된 모델 확인 (Gemini 모델인 경우에만 사용)
-                val selectedModelId = getSelectedModel()
-                val geminiModelId = if (isGeminiModel(selectedModelId)) {
-                    selectedModelId.removePrefix("💎 ").trim()
-                } else {
-                    "gemini-1.5-flash" // 기본값 사용
-                }
+                // 작업목록 생성은 무조건 Gemini API 사용 (사용자 선택 모델 무시)
+                val geminiModelId = "gemini-2.5-flash"
                 
                 // 현재 로그인한 사용자 ID 가져오기
                 val currentUserId = try {
@@ -4669,13 +4680,8 @@ button:hover {
         // 작업별 프롬프트 생성
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
-                // 선택된 모델 확인 (Gemini 모델인 경우에만 사용)
-                val selectedModelId = getSelectedModel()
-                val geminiModelId = if (isGeminiModel(selectedModelId)) {
-                    selectedModelId.removePrefix("💎 ").trim()
-                } else {
-                    "gemini-1.5-flash" // 기본값 사용
-                }
+                // 프롬프트 생성은 무조건 Gemini API 사용 (사용자 선택 모델 무시)
+                val geminiModelId = "gemini-2.5-flash"
                 
                 // 현재 로그인한 사용자 ID 가져오기
                 val currentUserId = try {
