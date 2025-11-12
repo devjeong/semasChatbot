@@ -26,6 +26,9 @@ class UserService(private val project: Project) {
     @Volatile
     private var currentUser: User? = null
     
+    // AuthApiClient 인스턴스 (서버 API 통신용)
+    private val authApiClient = AuthApiClient("http://192.168.18.53:5000")
+    
     init {
         // 플러그인 데이터 디렉토리에 DB 파일 생성
         val pluginDataDir = File(project.basePath ?: System.getProperty("user.home"), ".semas-chatbot")
@@ -34,6 +37,63 @@ class UserService(private val project: Project) {
         }
         dbPath = File(pluginDataDir, "users.db").absolutePath
         initializeDatabase()
+        
+        // ChatService의 서버 URL과 동기화 (지연 초기화)
+        syncServerUrlFromChatService()
+    }
+    
+    /**
+     * ChatService의 서버 URL과 동기화합니다.
+     * ChatService가 초기화되지 않은 경우 나중에 다시 시도합니다.
+     */
+    private fun syncServerUrlFromChatService() {
+        try {
+            val chatService = project.getService(ChatService::class.java)
+            if (chatService != null) {
+                val serverBaseUrl = chatService.getServerBaseUrl()
+                authApiClient.setServerBaseUrl(serverBaseUrl)
+                println("[UserService] 서버 URL 동기화 완료: $serverBaseUrl")
+            } else {
+                // ChatService가 아직 초기화되지 않은 경우, 기본값 사용
+                println("[UserService] ChatService 초기화 대기 중, 기본 서버 URL 사용")
+            }
+        } catch (e: Exception) {
+            // ChatService가 아직 초기화되지 않은 경우 기본값 사용
+            println("[UserService] ChatService 초기화 대기 중, 기본 서버 URL 사용: ${e.message}")
+        }
+    }
+    
+    /**
+     * 서버 URL을 업데이트합니다.
+     * ChatService의 서버 URL 변경 시 호출됩니다.
+     * @param serverBaseUrl 새로운 서버 기본 URL (포트 제외)
+     */
+    fun updateServerUrl(serverBaseUrl: String) {
+        authApiClient.setServerBaseUrl(serverBaseUrl)
+        println("[UserService] 서버 URL 업데이트: $serverBaseUrl")
+    }
+    
+    /**
+     * API 호출 전에 서버 URL을 동기화합니다.
+     * ChatService의 URL이 변경되었을 수 있으므로 확인합니다.
+     */
+    private fun ensureServerUrlSynced() {
+        try {
+            val chatService = project.getService(ChatService::class.java)
+            if (chatService != null) {
+                val currentServerUrl = chatService.getServerBaseUrl()
+                val authServerUrl = authApiClient.getServerBaseUrl()
+                // 포트를 제거하여 비교
+                val currentBase = currentServerUrl.replace(Regex(":\\d+$"), "")
+                val authBase = authServerUrl.replace(Regex(":\\d+$"), "")
+                if (currentBase != authBase) {
+                    authApiClient.setServerBaseUrl(currentServerUrl)
+                    println("[UserService] 서버 URL 재동기화: $currentServerUrl")
+                }
+            }
+        } catch (e: Exception) {
+            // 동기화 실패 시 무시 (기본값 사용)
+        }
     }
     
     /**
@@ -129,7 +189,7 @@ class UserService(private val project: Project) {
     }
     
     /**
-     * 회원가입을 처리합니다.
+     * 회원가입을 처리합니다. (서버 API 연동)
      * @param username 사용자 아이디
      * @param password 비밀번호
      * @param name 사용자 이름
@@ -137,6 +197,7 @@ class UserService(private val project: Project) {
      * @return 회원가입 성공 여부 및 메시지
      */
     fun registerUser(username: String, password: String, name: String, role: UserRole = UserRole.USER): Pair<Boolean, String> {
+        // 입력 유효성 검사
         if (username.isBlank() || password.isBlank() || name.isBlank()) {
             return Pair(false, "모든 필드를 입력해주세요.")
         }
@@ -149,10 +210,24 @@ class UserService(private val project: Project) {
             return Pair(false, "비밀번호는 최소 4자 이상이어야 합니다.")
         }
         
+        // 서버 URL 동기화 확인
+        ensureServerUrlSynced()
+        
+        // 서버로 회원가입 요청 전송
+        val (success, message) = authApiClient.registerUser(username, password, name, role)
+        
+        if (!success) {
+            return Pair(false, message)
+        }
+        
+        // 서버 전송 성공 시 로컬 DB에도 저장 (옵션: 오프라인 지원을 위해)
+        // 주의: 서버와 로컬 DB의 비밀번호 해시 방식이 다를 수 있으므로,
+        // 로컬 DB 저장 시 서버에서 받은 해시값을 사용하거나 별도 처리 필요
         return try {
             getConnection().use { conn ->
                 try {
-                    val passwordHash = User.hashPassword(password)
+                    // 서버에서 성공했으므로 로컬에도 저장
+                    val passwordHash = User.hashPassword(password)  // 로컬 해시
                     val createdAt = LocalDateTime.now().format(dateTimeFormatter)
                     
                     val stmt = conn.prepareStatement("""
@@ -168,40 +243,53 @@ class UserService(private val project: Project) {
                     
                     stmt.executeUpdate()
                     stmt.close()
-                    
-                    // 트랜잭션 커밋
                     conn.commit()
                     
-                    Pair(true, "회원가입이 완료되었습니다!")
+                    Pair(true, message)
                 } catch (e: Exception) {
                     conn.rollback()
-                    throw e
+                    // 서버에는 저장되었지만 로컬 저장 실패
+                    // 서버 저장이 우선이므로 성공으로 처리하되 경고 메시지
+                    if (e.message?.contains("UNIQUE constraint") == true) {
+                        Pair(true, "$message (로컬 저장: 이미 존재하는 아이디)")
+                    } else {
+                        Pair(true, "$message (로컬 저장 실패: ${e.message})")
+                    }
                 }
             }
         } catch (e: Exception) {
-            if (e.message?.contains("UNIQUE constraint") == true) {
-                Pair(false, "이미 존재하는 아이디입니다.")
-            } else {
-                Pair(false, "회원가입 중 오류가 발생했습니다: ${e.message}")
-            }
+            // 로컬 DB 오류는 무시하고 서버 저장 성공 메시지 반환
+            Pair(true, "$message (로컬 저장 실패: ${e.message})")
         }
     }
     
     /**
-     * 로그인을 처리합니다.
+     * 로그인을 처리합니다. (서버 API 연동)
      * @param username 사용자 아이디
      * @param password 비밀번호
      * @return 로그인 성공 여부 및 메시지
      */
     fun login(username: String, password: String): Pair<Boolean, String> {
+        // 입력 유효성 검사
         if (username.isBlank() || password.isBlank()) {
             return Pair(false, "아이디와 비밀번호를 입력해주세요.")
         }
         
+        // 서버 URL 동기화 확인
+        ensureServerUrlSynced()
+        
+        // 서버로 로그인 요청 전송
+        val (success, message, userInfo) = authApiClient.login(username, password)
+        
+        if (!success) {
+            return Pair(false, message)
+        }
+        
+        // 서버 인증 성공 시 로컬 DB에서 사용자 정보 조회 및 동기화
         return try {
             getConnection().use { conn ->
                 try {
-                    val passwordHash = User.hashPassword(password)
+                    // 로컬 DB에서 사용자 정보 조회
                     val stmt = conn.prepareStatement("""
                         SELECT id, username, password_hash, name, role, created_at, last_login, is_active
                         FROM users
@@ -212,45 +300,94 @@ class UserService(private val project: Project) {
                     val rs = stmt.executeQuery()
                     
                     if (rs.next()) {
-                        val storedHash = rs.getString("password_hash")
-                        if (storedHash == passwordHash) {
-                            // 로그인 성공
+                        // 로컬에 사용자 정보가 있는 경우
+                        val user = User(
+                            id = rs.getInt("id"),
+                            username = rs.getString("username"),
+                            passwordHash = rs.getString("password_hash"),
+                            name = rs.getString("name"),
+                            role = UserRole.valueOf(rs.getString("role")),
+                            createdAt = rs.getString("created_at"),
+                            lastLogin = rs.getString("last_login"),
+                            isActive = rs.getInt("is_active") == 1
+                        )
+                        
+                        // 마지막 로그인 시간 업데이트
+                        val updateStmt = conn.prepareStatement("""
+                            UPDATE users SET last_login = ? WHERE id = ?
+                        """.trimIndent())
+                        updateStmt.setString(1, LocalDateTime.now().format(dateTimeFormatter))
+                        updateStmt.setInt(2, user.id)
+                        updateStmt.executeUpdate()
+                        updateStmt.close()
+                        
+                        // 통계 초기화
+                        initializeTodayStatistics(user.id, conn)
+                        conn.commit()
+                        
+                        currentUser = user
+                        Pair(true, "로그인 성공! 환영합니다, ${user.name}님!")
+                    } else {
+                        // 로컬에 사용자 정보가 없는 경우 (서버에는 있지만 로컬 동기화 안 됨)
+                        // 서버에서 받은 사용자 정보를 사용하여 로컬 DB에 생성
+                        val serverName = userInfo?.get("name") as? String ?: username
+                        val serverRole = try {
+                            UserRole.valueOf(userInfo?.get("role") as? String ?: "USER")
+                        } catch (e: Exception) {
+                            UserRole.USER
+                        }
+                        val serverCreatedAt = userInfo?.get("created_at") as? String 
+                            ?: LocalDateTime.now().format(dateTimeFormatter)
+                        
+                        val passwordHash = User.hashPassword(password)
+                        val createdAt = serverCreatedAt
+                        val lastLogin = LocalDateTime.now().format(dateTimeFormatter)
+                        
+                        val insertStmt = conn.prepareStatement("""
+                            INSERT INTO users (username, password_hash, name, role, created_at, last_login, is_active)
+                            VALUES (?, ?, ?, ?, ?, ?, 1)
+                        """.trimIndent())
+                        
+                        insertStmt.setString(1, username)
+                        insertStmt.setString(2, passwordHash)
+                        insertStmt.setString(3, serverName)
+                        insertStmt.setString(4, serverRole.name)
+                        insertStmt.setString(5, createdAt)
+                        insertStmt.setString(6, lastLogin)
+                        
+                        insertStmt.executeUpdate()
+                        insertStmt.close()
+                        
+                        // 생성된 사용자 정보 조회
+                        val newUserStmt = conn.prepareStatement("""
+                            SELECT id, username, password_hash, name, role, created_at, last_login, is_active
+                            FROM users
+                            WHERE username = ?
+                        """.trimIndent())
+                        newUserStmt.setString(1, username)
+                        val newRs = newUserStmt.executeQuery()
+                        
+                        if (newRs.next()) {
                             val user = User(
-                                id = rs.getInt("id"),
-                                username = rs.getString("username"),
-                                passwordHash = storedHash,
-                                name = rs.getString("name"),
-                                role = UserRole.valueOf(rs.getString("role")),
-                                createdAt = rs.getString("created_at"),
-                                lastLogin = rs.getString("last_login"),
-                                isActive = rs.getInt("is_active") == 1
+                                id = newRs.getInt("id"),
+                                username = newRs.getString("username"),
+                                passwordHash = newRs.getString("password_hash"),
+                                name = newRs.getString("name"),
+                                role = UserRole.valueOf(newRs.getString("role")),
+                                createdAt = newRs.getString("created_at"),
+                                lastLogin = newRs.getString("last_login"),
+                                isActive = newRs.getInt("is_active") == 1
                             )
                             
-                            // 마지막 로그인 시간 업데이트
-                            val updateStmt = conn.prepareStatement("""
-                                UPDATE users SET last_login = ? WHERE id = ?
-                            """.trimIndent())
-                            updateStmt.setString(1, LocalDateTime.now().format(dateTimeFormatter))
-                            updateStmt.setInt(2, user.id)
-                            updateStmt.executeUpdate()
-                            updateStmt.close()
-                            
-                            // 같은 연결에서 통계 초기화 (중첩 연결 방지)
                             initializeTodayStatistics(user.id, conn)
-                            
-                            // 트랜잭션 커밋
                             conn.commit()
                             
                             currentUser = user
-                            
                             Pair(true, "로그인 성공! 환영합니다, ${user.name}님!")
                         } else {
                             conn.rollback()
-                            Pair(false, "비밀번호가 일치하지 않습니다.")
+                            Pair(false, "사용자 정보 동기화 중 오류가 발생했습니다.")
                         }
-                    } else {
-                        conn.rollback()
-                        Pair(false, "존재하지 않는 아이디이거나 비활성화된 계정입니다.")
                     }
                 } catch (e: Exception) {
                     conn.rollback()
@@ -258,7 +395,23 @@ class UserService(private val project: Project) {
                 }
             }
         } catch (e: Exception) {
-            Pair(false, "로그인 중 오류가 발생했습니다: ${e.message}")
+            // 로컬 DB 오류 발생 시에도 서버 인증은 성공했으므로
+            // 임시 사용자 객체 생성하여 로그인 처리
+            val tempUser = User(
+                id = 0,
+                username = username,
+                passwordHash = User.hashPassword(password),
+                name = userInfo?.get("name") as? String ?: username,
+                role = try {
+                    UserRole.valueOf(userInfo?.get("role") as? String ?: "USER")
+                } catch (e: Exception) {
+                    UserRole.USER
+                },
+                createdAt = userInfo?.get("created_at") as? String ?: LocalDateTime.now().format(dateTimeFormatter),
+                isActive = true
+            )
+            currentUser = tempUser
+            Pair(true, "$message (로컬 동기화 실패: ${e.message})")
         }
     }
     

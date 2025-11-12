@@ -241,9 +241,10 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             descriptionLabel.font = Font("SansSerif", Font.PLAIN, 12)
 
             // 안내 레이블 생성
-            val infoLabel = JLabel("<html>이 URL은 LM Studio와 Gemini API 프록시의 기본 주소로 사용됩니다.<br>" +
+            val infoLabel = JLabel("<html>이 URL은 LM Studio, Gemini API 프록시, 그리고 인증 API의 기본 주소로 사용됩니다.<br>" +
                     "• LM Studio: {서버URL}:7777/v1<br>" +
-                    "• Gemini API: {서버URL}:5000/api/gemini</html>")
+                    "• Gemini API: {서버URL}:5000/api/gemini<br>" +
+                    "• 인증 API: {서버URL}:5000/api/auth</html>")
             infoLabel.font = Font("SansSerif", Font.PLAIN, 11)
             infoLabel.foreground = Color.GRAY
 
@@ -254,8 +255,10 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
 
             // 현재 설정 표시 레이블
             val currentGeminiUrl = chatService.getServerBaseUrl() + ":5000/api/gemini"
+            val currentAuthUrl = chatService.getServerBaseUrl() + ":5000/api/auth"
             val currentLabel = JLabel("<html>현재 LM Studio URL: $currentLmStudioUrl<br>" +
-                    "현재 Gemini API URL: $currentGeminiUrl</html>")
+                    "현재 Gemini API URL: $currentGeminiUrl<br>" +
+                    "현재 인증 API URL: $currentAuthUrl</html>")
             currentLabel.font = Font("SansSerif", Font.PLAIN, 10)
             currentLabel.foreground = Color.DARK_GRAY
 
@@ -291,9 +294,11 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                         chatService.setServerBaseUrl(newUrl)
                         val updatedLmStudioUrl = chatService.getLmStudioUrl()
                         val updatedGeminiUrl = chatService.getServerBaseUrl() + ":5000/api/gemini"
+                        val updatedAuthUrl = chatService.getServerBaseUrl() + ":5000/api/auth"
                         chatService.sendMessage("서버 URL이 변경되었습니다: $newUrl\n" +
                                 "LM Studio URL: $updatedLmStudioUrl\n" +
-                                "Gemini API URL: $updatedGeminiUrl", isUser = false)
+                                "Gemini API URL: $updatedGeminiUrl\n" +
+                                "인증 API URL: $updatedAuthUrl", isUser = false)
                     } catch (e: Exception) {
                         chatService.sendMessage("유효하지 않은 URL입니다: ${e.message}", isUser = false)
                         JOptionPane.showMessageDialog(

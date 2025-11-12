@@ -316,7 +316,7 @@ class ChatService(private val project: Project) {
     
     /**
      * 서버 기본 URL을 설정합니다.
-     * 이 URL은 LM Studio와 Gemini API 프록시의 기본 주소로 사용됩니다.
+     * 이 URL은 LM Studio, Gemini API 프록시, 그리고 인증 API의 기본 주소로 사용됩니다.
      * 포트는 포함하지 않으며, 각 서비스별로 자동으로 추가됩니다.
      * @param url 새로운 서버 기본 URL (예: "http://192.168.18.53")
      */
@@ -338,11 +338,20 @@ class ChatService(private val project: Project) {
         val geminiServerUrl = "$cleanedUrl:5000"
         geminiClient.setServerBaseUrl(geminiServerUrl)
         
+        // UserService의 AuthApiClient에도 서버 URL 동기화
+        try {
+            val userService = project.getService(UserService::class.java)
+            userService?.updateServerUrl(cleanedUrl)
+        } catch (e: Exception) {
+            println("[ChatService] UserService 업데이트 실패: ${e.message}")
+        }
+        
         // 설정 저장
         saveServerSettings()
         println("[ChatService] 서버 URL이 변경되었습니다: $cleanedUrl")
         println("[ChatService] LM Studio URL: $lmStudioUrl")
         println("[ChatService] Gemini API URL: $geminiServerUrl/api/gemini")
+        println("[ChatService] 인증 API URL: $cleanedUrl:5000/api/auth")
     }
     
     /**
@@ -399,6 +408,14 @@ class ChatService(private val project: Project) {
                     // Gemini Client에 서버 URL 설정 (포트 5000 포함)
                     val geminiServerUrl = "$cleanedUrl:5000"
                     geminiClient.setServerBaseUrl(geminiServerUrl)
+                    
+                    // UserService의 AuthApiClient에도 서버 URL 동기화
+                    try {
+                        val userService = project.getService(UserService::class.java)
+                        userService?.updateServerUrl(cleanedUrl)
+                    } catch (e: Exception) {
+                        println("[ChatService] UserService 업데이트 실패: ${e.message}")
+                    }
                 }
             } else {
                 // 기본값 설정
@@ -407,6 +424,14 @@ class ChatService(private val project: Project) {
                 // Gemini는 포트 5000 사용
                 val geminiServerUrl = "$serverBaseUrl:5000"
                 geminiClient.setServerBaseUrl(geminiServerUrl)
+                
+                // UserService의 AuthApiClient에도 서버 URL 동기화
+                try {
+                    val userService = project.getService(UserService::class.java)
+                    userService?.updateServerUrl(serverBaseUrl)
+                } catch (e: Exception) {
+                    println("[ChatService] UserService 업데이트 실패: ${e.message}")
+                }
             }
         } catch (e: Exception) {
             println("서버 설정 로드 오류: ${e.message}")
@@ -1477,11 +1502,19 @@ class ChatService(private val project: Project) {
             }
             
             // Gemini API 사용
-            println("[ChatService] Gemini API 호출 시작: modelId=$actualGeminiModelId")
+            // 현재 로그인한 사용자 ID 가져오기
+            val currentUserId = try {
+                userService.getCurrentUser()?.id
+            } catch (e: Exception) {
+                null
+            }
+            
+            println("[ChatService] Gemini API 호출 시작: modelId=$actualGeminiModelId${if (currentUserId != null) ", userId=$currentUserId" else ""}")
             geminiClient.sendChatRequestStream(
                 userMessage = prompt,
                 systemMessage = systemMessage,
                 modelId = actualGeminiModelId,
+                userId = currentUserId,
                 onDelta = { delta ->
                     ApplicationManager.getApplication().invokeLater {
                         // 응답 누적

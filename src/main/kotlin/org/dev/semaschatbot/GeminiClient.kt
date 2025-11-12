@@ -68,9 +68,10 @@ class GeminiClient(
      * @param userMessage 사용자 입력 메시지
      * @param systemMessage 시스템 프롬프트 (Gemini는 system role을 지원하지 않으므로 user message에 포함)
      * @param modelId 사용할 모델 ID (기본값: "gemini-1.5-flash" - 최신 안정 모델)
+     * @param userId 로그인한 사용자 ID (선택적, 서버에서 사용량 추적 등에 사용)
      * @return LLM 응답 문자열 또는 오류 발생 시 null
      */
-    fun sendChatRequest(userMessage: String, systemMessage: String, modelId: String = "gemini-1.5-flash"): String? {
+    fun sendChatRequest(userMessage: String, systemMessage: String, modelId: String = "gemini-1.5-flash", userId: Int? = null): String? {
         if (apiKey.isBlank()) {
             println("Gemini API 키가 설정되지 않았습니다.")
             return null
@@ -103,12 +104,18 @@ class GeminiClient(
         val requestBodyJson = gson.toJson(requestBodyMap)
         
         // 중간 서버를 통한 프록시 호출
-        // 요청 본문에 모델 ID와 API Key를 포함하여 전송
-        val proxyRequestBodyMap = mapOf(
+        // 요청 본문에 모델 ID, API Key, 사용자 ID를 포함하여 전송
+        val proxyRequestBodyMap = mutableMapOf<String, Any>(
             "modelId" to modelId,
             "apiKey" to apiKey,
             "requestBody" to requestBodyMap
         )
+        
+        // 사용자 ID가 제공된 경우 추가
+        if (userId != null) {
+            proxyRequestBodyMap["userId"] = userId
+        }
+        
         val proxyRequestBodyJson = gson.toJson(proxyRequestBodyMap)
         
         // 중간 서버의 Gemini 프록시 엔드포인트 URL
@@ -116,6 +123,9 @@ class GeminiClient(
         
         println("[GeminiClient] 프록시 호출: $endpointUrl")
         println("[GeminiClient] 모델 ID: $modelId")
+        if (userId != null) {
+            println("[GeminiClient] 사용자 ID: $userId")
+        }
         
         val request = Request.Builder()
             .url(endpointUrl)
@@ -158,13 +168,20 @@ class GeminiClient(
     /**
      * 스트리밍 모드 채팅 요청. Gemini API는 스트리밍을 지원하지만 여기서는 비스트리밍으로 구현하고
      * 전체 응답을 델타로 분할하여 전송합니다.
+     * @param userMessage 사용자 입력 메시지
+     * @param systemMessage 시스템 프롬프트
      * @param modelId 사용할 모델 ID (기본값: "gemini-1.5-flash" - 최신 안정 모델)
      *                 지원되는 모델: gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash-exp 등
+     * @param userId 로그인한 사용자 ID (선택적, 서버에서 사용량 추적 등에 사용)
+     * @param onDelta 델타 콜백 (스트리밍 응답의 각 부분)
+     * @param onComplete 완료 콜백
+     * @param onError 에러 콜백
      */
     fun sendChatRequestStream(
         userMessage: String,
         systemMessage: String,
         modelId: String = "gemini-1.5-flash",
+        userId: Int? = null,
         onDelta: (String) -> Unit,
         onComplete: () -> Unit,
         onError: (Exception) -> Unit
@@ -177,7 +194,7 @@ class GeminiClient(
         // 백그라운드 스레드에서 실행
         Thread {
             try {
-                val response = sendChatRequest(userMessage, systemMessage, modelId)
+                val response = sendChatRequest(userMessage, systemMessage, modelId, userId)
                 if (response != null) {
                     // 응답을 문자 단위로 분할하여 스트리밍처럼 전송
                     response.forEach { char ->
