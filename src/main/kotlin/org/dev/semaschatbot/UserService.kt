@@ -214,32 +214,65 @@ class UserService(private val project: Project) {
         ensureServerUrlSynced()
         
         // 서버로 회원가입 요청 전송
-        val (success, message) = authApiClient.registerUser(username, password, name, role)
+        val (success, message, userInfo) = authApiClient.registerUser(username, password, name, role)
         
         if (!success) {
             return Pair(false, message)
         }
         
-        // 서버 전송 성공 시 로컬 DB에도 저장 (옵션: 오프라인 지원을 위해)
-        // 주의: 서버와 로컬 DB의 비밀번호 해시 방식이 다를 수 있으므로,
-        // 로컬 DB 저장 시 서버에서 받은 해시값을 사용하거나 별도 처리 필요
+        // 서버 전송 성공 시 로컬 DB에도 저장 (서버 ID 사용)
         return try {
             getConnection().use { conn ->
                 try {
-                    // 서버에서 성공했으므로 로컬에도 저장
-                    val passwordHash = User.hashPassword(password)  // 로컬 해시
-                    val createdAt = LocalDateTime.now().format(dateTimeFormatter)
+                    // 서버에서 받은 사용자 ID 사용
+                    val serverId = (userInfo?.get("id") as? Int) ?: 0
+                    
+                    if (serverId <= 0) {
+                        // 서버에서 ID를 받지 못한 경우, 로컬 AUTOINCREMENT 사용
+                        val passwordHash = User.hashPassword(password)
+                        val createdAt = LocalDateTime.now().format(dateTimeFormatter)
+                        
+                        val stmt = conn.prepareStatement("""
+                            INSERT INTO users (username, password_hash, name, role, created_at, is_active)
+                            VALUES (?, ?, ?, ?, ?, 1)
+                        """.trimIndent())
+                        
+                        stmt.setString(1, username)
+                        stmt.setString(2, passwordHash)
+                        stmt.setString(3, name)
+                        stmt.setString(4, role.name)
+                        stmt.setString(5, createdAt)
+                        
+                        stmt.executeUpdate()
+                        stmt.close()
+                        conn.commit()
+                        
+                        return Pair(true, "$message (서버 ID 미수신, 로컬 ID 사용)")
+                    }
+                    
+                    // 서버 ID를 명시적으로 사용하여 저장
+                    val serverName = userInfo?.get("name") as? String ?: name
+                    val serverRole = try {
+                        UserRole.valueOf(userInfo?.get("role") as? String ?: role.name)
+                    } catch (e: Exception) {
+                        role
+                    }
+                    val serverCreatedAt = userInfo?.get("created_at") as? String 
+                        ?: LocalDateTime.now().format(dateTimeFormatter)
+                    
+                    val passwordHash = User.hashPassword(password)
                     
                     val stmt = conn.prepareStatement("""
-                        INSERT INTO users (username, password_hash, name, role, created_at, is_active)
-                        VALUES (?, ?, ?, ?, ?, 1)
+                        INSERT INTO users (id, username, password_hash, name, role, created_at, is_active)
+                        VALUES (?, ?, ?, ?, ?, ?, 1)
                     """.trimIndent())
                     
-                    stmt.setString(1, username)
-                    stmt.setString(2, passwordHash)
-                    stmt.setString(3, name)
-                    stmt.setString(4, role.name)
-                    stmt.setString(5, createdAt)
+                    stmt.setInt(1, serverId)
+                    stmt.setString(2, username)
+                    stmt.setString(3, passwordHash)
+                    stmt.setString(4, serverName)
+                    stmt.setString(5, serverRole.name)
+                    stmt.setString(6, serverCreatedAt)
                     
                     stmt.executeUpdate()
                     stmt.close()
@@ -301,35 +334,97 @@ class UserService(private val project: Project) {
                     
                     if (rs.next()) {
                         // 로컬에 사용자 정보가 있는 경우
-                        val user = User(
-                            id = rs.getInt("id"),
-                            username = rs.getString("username"),
-                            passwordHash = rs.getString("password_hash"),
-                            name = rs.getString("name"),
-                            role = UserRole.valueOf(rs.getString("role")),
-                            createdAt = rs.getString("created_at"),
-                            lastLogin = rs.getString("last_login"),
-                            isActive = rs.getInt("is_active") == 1
-                        )
+                        // 서버에서 받은 ID와 로컬 ID를 비교하여 동기화
+                        val localId = rs.getInt("id")
+                        val serverId = (userInfo?.get("id") as? Int) ?: 0
                         
-                        // 마지막 로그인 시간 업데이트
-                        val updateStmt = conn.prepareStatement("""
-                            UPDATE users SET last_login = ? WHERE id = ?
+                        // 서버 ID가 있고 로컬 ID와 다르면 서버 ID로 업데이트
+                        val finalId = if (serverId > 0 && serverId != localId) {
+                            // 서버 ID로 업데이트 (기존 레코드 삭제 후 재생성)
+                            val deleteStmt = conn.prepareStatement("DELETE FROM users WHERE id = ?")
+                            deleteStmt.setInt(1, localId)
+                            deleteStmt.executeUpdate()
+                            deleteStmt.close()
+                            
+                            // 서버 ID를 사용하여 재생성
+                            val serverName = userInfo?.get("name") as? String ?: rs.getString("name")
+                            val serverRole = try {
+                                UserRole.valueOf(userInfo?.get("role") as? String ?: rs.getString("role"))
+                            } catch (e: Exception) {
+                                UserRole.valueOf(rs.getString("role"))
+                            }
+                            val serverCreatedAt = userInfo?.get("created_at") as? String ?: rs.getString("created_at")
+                            
+                            val insertStmt = conn.prepareStatement("""
+                                INSERT INTO users (id, username, password_hash, name, role, created_at, last_login, is_active)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                            """.trimIndent())
+                            
+                            insertStmt.setInt(1, serverId)
+                            insertStmt.setString(2, rs.getString("username"))
+                            insertStmt.setString(3, rs.getString("password_hash"))
+                            insertStmt.setString(4, serverName)
+                            insertStmt.setString(5, serverRole.name)
+                            insertStmt.setString(6, serverCreatedAt)
+                            insertStmt.setString(7, LocalDateTime.now().format(dateTimeFormatter))
+                            insertStmt.executeUpdate()
+                            insertStmt.close()
+                            
+                            serverId
+                        } else {
+                            localId
+                        }
+                        
+                        // 업데이트된 사용자 정보 조회
+                        val updatedStmt = conn.prepareStatement("""
+                            SELECT id, username, password_hash, name, role, created_at, last_login, is_active
+                            FROM users
+                            WHERE id = ?
                         """.trimIndent())
-                        updateStmt.setString(1, LocalDateTime.now().format(dateTimeFormatter))
-                        updateStmt.setInt(2, user.id)
-                        updateStmt.executeUpdate()
-                        updateStmt.close()
+                        updatedStmt.setInt(1, finalId)
+                        val updatedRs = updatedStmt.executeQuery()
                         
-                        // 통계 초기화
-                        initializeTodayStatistics(user.id, conn)
-                        conn.commit()
-                        
-                        currentUser = user
-                        Pair(true, "로그인 성공! 환영합니다, ${user.name}님!")
+                        if (updatedRs.next()) {
+                            val user = User(
+                                id = updatedRs.getInt("id"),
+                                username = updatedRs.getString("username"),
+                                passwordHash = updatedRs.getString("password_hash"),
+                                name = updatedRs.getString("name"),
+                                role = UserRole.valueOf(updatedRs.getString("role")),
+                                createdAt = updatedRs.getString("created_at"),
+                                lastLogin = updatedRs.getString("last_login"),
+                                isActive = updatedRs.getInt("is_active") == 1
+                            )
+                            
+                            // 마지막 로그인 시간 업데이트
+                            val updateStmt = conn.prepareStatement("""
+                                UPDATE users SET last_login = ? WHERE id = ?
+                            """.trimIndent())
+                            updateStmt.setString(1, LocalDateTime.now().format(dateTimeFormatter))
+                            updateStmt.setInt(2, user.id)
+                            updateStmt.executeUpdate()
+                            updateStmt.close()
+                            
+                            // 통계 초기화
+                            initializeTodayStatistics(user.id, conn)
+                            conn.commit()
+                            
+                            currentUser = user
+                            Pair(true, "로그인 성공! 환영합니다, ${user.name}님!")
+                        } else {
+                            conn.rollback()
+                            Pair(false, "사용자 정보 동기화 중 오류가 발생했습니다.")
+                        }
                     } else {
                         // 로컬에 사용자 정보가 없는 경우 (서버에는 있지만 로컬 동기화 안 됨)
                         // 서버에서 받은 사용자 정보를 사용하여 로컬 DB에 생성
+                        val serverId = (userInfo?.get("id") as? Int) ?: 0
+                        
+                        if (serverId <= 0) {
+                            conn.rollback()
+                            return Pair(false, "서버에서 사용자 ID를 받지 못했습니다.")
+                        }
+                        
                         val serverName = userInfo?.get("name") as? String ?: username
                         val serverRole = try {
                             UserRole.valueOf(userInfo?.get("role") as? String ?: "USER")
@@ -343,17 +438,19 @@ class UserService(private val project: Project) {
                         val createdAt = serverCreatedAt
                         val lastLogin = LocalDateTime.now().format(dateTimeFormatter)
                         
+                        // 서버 ID를 명시적으로 사용하여 INSERT
                         val insertStmt = conn.prepareStatement("""
-                            INSERT INTO users (username, password_hash, name, role, created_at, last_login, is_active)
-                            VALUES (?, ?, ?, ?, ?, ?, 1)
+                            INSERT INTO users (id, username, password_hash, name, role, created_at, last_login, is_active)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
                         """.trimIndent())
                         
-                        insertStmt.setString(1, username)
-                        insertStmt.setString(2, passwordHash)
-                        insertStmt.setString(3, serverName)
-                        insertStmt.setString(4, serverRole.name)
-                        insertStmt.setString(5, createdAt)
-                        insertStmt.setString(6, lastLogin)
+                        insertStmt.setInt(1, serverId)
+                        insertStmt.setString(2, username)
+                        insertStmt.setString(3, passwordHash)
+                        insertStmt.setString(4, serverName)
+                        insertStmt.setString(5, serverRole.name)
+                        insertStmt.setString(6, createdAt)
+                        insertStmt.setString(7, lastLogin)
                         
                         insertStmt.executeUpdate()
                         insertStmt.close()
@@ -362,9 +459,9 @@ class UserService(private val project: Project) {
                         val newUserStmt = conn.prepareStatement("""
                             SELECT id, username, password_hash, name, role, created_at, last_login, is_active
                             FROM users
-                            WHERE username = ?
+                            WHERE id = ?
                         """.trimIndent())
-                        newUserStmt.setString(1, username)
+                        newUserStmt.setInt(1, serverId)
                         val newRs = newUserStmt.executeQuery()
                         
                         if (newRs.next()) {
@@ -396,9 +493,10 @@ class UserService(private val project: Project) {
             }
         } catch (e: Exception) {
             // 로컬 DB 오류 발생 시에도 서버 인증은 성공했으므로
-            // 임시 사용자 객체 생성하여 로그인 처리
+            // 서버에서 받은 ID를 사용하여 임시 사용자 객체 생성
+            val serverId = (userInfo?.get("id") as? Int) ?: 0
             val tempUser = User(
-                id = 0,
+                id = serverId,  // 서버 ID 사용
                 username = username,
                 passwordHash = User.hashPassword(password),
                 name = userInfo?.get("name") as? String ?: username,

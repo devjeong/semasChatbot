@@ -52,14 +52,27 @@ class LmStudioStatsApiClient(
      */
     fun sendStats(stats: LmStudioStats): Boolean {
         return try {
-            val requestBodyMap = mapOf(
-                "userId" to (stats.userId ?: 0),
-                "modelId" to stats.modelId,
-                "inputTokens" to stats.inputTokens,
-                "outputTokens" to stats.outputTokens,
-                "totalTokens" to stats.totalTokens,
-                "responseTime" to stats.responseTime
-            )
+            // userId가 null이면 전송하지 않거나 서버에서 처리하도록 함
+            // 0 대신 null을 전송하여 서버에서 올바르게 처리하도록 함
+            val requestBodyMap = if (stats.userId != null) {
+                mapOf(
+                    "userId" to stats.userId,
+                    "modelId" to stats.modelId,
+                    "inputTokens" to stats.inputTokens,
+                    "outputTokens" to stats.outputTokens,
+                    "totalTokens" to stats.totalTokens,
+                    "responseTime" to stats.responseTime
+                )
+            } else {
+                // userId가 null인 경우 (로그인하지 않은 사용자)
+                mapOf(
+                    "modelId" to stats.modelId,
+                    "inputTokens" to stats.inputTokens,
+                    "outputTokens" to stats.outputTokens,
+                    "totalTokens" to stats.totalTokens,
+                    "responseTime" to stats.responseTime
+                )
+            }
             
             val requestBodyJson = gson.toJson(requestBodyMap)
             val request = Request.Builder()

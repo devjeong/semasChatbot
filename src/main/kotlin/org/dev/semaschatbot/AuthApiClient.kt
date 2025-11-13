@@ -61,14 +61,14 @@ class AuthApiClient(
      * @param password 비밀번호 (평문, 서버에서 해시 처리)
      * @param name 사용자 이름
      * @param role 사용자 권한 (기본값: USER)
-     * @return Pair<성공 여부, 메시지>
+     * @return Triple<성공 여부, 메시지, 사용자 정보>, 성공 시 사용자 정보도 포함된 Triple 반환
      */
     fun registerUser(
         username: String,
         password: String,
         name: String,
         role: UserRole = UserRole.USER
-    ): Pair<Boolean, String> {
+    ): Triple<Boolean, String, Map<String, Any>?> {
         // 요청 본문 생성
         val requestBodyMap = mapOf(
             "username" to username,
@@ -100,21 +100,39 @@ class AuthApiClient(
                     } catch (e: Exception) {
                         "서버 오류가 발생했습니다. (HTTP ${response.code})"
                     }
-                    return Pair(false, errorMessage)
+                    return Triple(false, errorMessage, null)
                 }
                 
                 // 성공 응답 파싱
                 val responseJson = gson.fromJson(responseBody, JsonObject::class.java)
                 val message = responseJson.get("message")?.asString ?: "회원가입이 완료되었습니다!"
                 
-                Pair(true, message)
+                // 사용자 정보 추출 (있는 경우)
+                val userInfo: Map<String, Any>? = try {
+                    val userJson = responseJson.getAsJsonObject("user")
+                    if (userJson != null) {
+                        mapOf(
+                            "id" to (userJson.get("id")?.asInt ?: 0),
+                            "username" to (userJson.get("username")?.asString ?: username),
+                            "name" to (userJson.get("name")?.asString ?: name),
+                            "role" to (userJson.get("role")?.asString ?: role.name),
+                            "created_at" to (userJson.get("created_at")?.asString ?: "")
+                        )
+                    } else {
+                        null
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+                
+                Triple(true, message, userInfo)
             }
         } catch (e: IOException) {
             // 네트워크 오류 처리
-            Pair(false, "네트워크 오류가 발생했습니다: ${e.message}")
+            Triple(false, "네트워크 오류가 발생했습니다: ${e.message}", null)
         } catch (e: Exception) {
             // 기타 오류 처리
-            Pair(false, "회원가입 요청 중 오류가 발생했습니다: ${e.message}")
+            Triple(false, "회원가입 요청 중 오류가 발생했습니다: ${e.message}", null)
         }
     }
     
