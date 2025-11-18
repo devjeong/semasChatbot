@@ -62,7 +62,7 @@ Content-Type: application/json
 | 필드명 | 타입 | 필수 | 설명 |
 |--------|------|------|------|
 | `modelId` | string | ✅ | 사용할 Gemini 모델 ID<br>예: `"gemini-1.5-flash"`, `"gemini-1.5-pro"`, `"gemini-2.0-flash-exp"` |
-| `apiKey` | string | ✅ | Google Gemini API Key<br>예: `"AIzaSyCbHuQC9T3iMGAkbZhw7EHNSFRi2WH7z4U"` |
+| `apiKey` | string | ✅ | Google Gemini API Key<br>예: `""` |
 | `requestBody` | object | ✅ | Gemini API에 전달할 실제 요청 본문 |
 
 #### requestBody.contents 필드
@@ -87,7 +87,7 @@ Content-Type: application/json
 ```json
 {
   "modelId": "gemini-1.5-flash",
-  "apiKey": "AIzaSyCbHuQC9T3iMGAkbZhw7EHNSFRi2WH7z4U",
+  "apiKey": "",
   "requestBody": {
     "contents": [
       {

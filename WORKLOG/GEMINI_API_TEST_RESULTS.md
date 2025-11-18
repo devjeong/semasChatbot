@@ -23,7 +23,7 @@ private val testApiKey = "YOUR_GEMINI_API_KEY_HERE"
 ```
 
 **실제 설정값**: `config.properties`에서 로드된 API Key 사용
-- ✅ API Key가 설정되어 있음: `AIzaSyCbHuQC9T3iMGAkbZhw7EHNSFRi2WH7z4U`
+- ✅ API Key가 설정되어 있음: ``
 
 ### 2. 서버 상태 확인
 
