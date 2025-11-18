@@ -288,7 +288,7 @@ class ChatService(private val project: Project) {
     /**
      * 모델 ID에서 실제 Gemini 모델명을 추출합니다.
      * @param modelId 선택된 모델 ID (예: "💎 gemini-2.5-flash")
-     * @return 실제 모델명 (예: "gemini-1.5-flash")
+     * @return 실제 모델명 (예: "gemini-2.5-flash")
      */
     private fun extractGeminiModelId(modelId: String): String {
         return if (modelId.startsWith("💎")) {
@@ -1517,20 +1517,9 @@ class ChatService(private val project: Project) {
         println("[ChatService] 선택된 모델: $selectedModelId")
         println("[ChatService] Gemini 모델 여부: $isGemini")
         println("[ChatService] 실제 Gemini 모델 ID: $actualGeminiModelId")
-        println("[ChatService] Gemini API Key 존재 여부: ${geminiApiKey.isNotBlank()}")
         
         if (isGemini && actualGeminiModelId != null) {
-            // Gemini 모델 선택 시 API Key 확인
-            if (geminiApiKey.isBlank()) {
-                ApplicationManager.getApplication().invokeLater {
-                    loadingIndicator?.isVisible = false
-                    sendMessage("❌ Gemini 모델을 사용하려면 config.properties 파일에 gemini.apiKey를 설정해주세요.\n설정 위치: src/main/resources/config.properties", isUser = false)
-                    clearCursorContext()
-                }
-                return
-            }
-            
-            // Gemini API 사용
+            // Gemini API 사용 (API Key는 중앙서버에서 관리)
             // 현재 로그인한 사용자 ID 가져오기
             val currentUserId = try {
                 userService.getCurrentUser()?.id

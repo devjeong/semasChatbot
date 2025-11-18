@@ -151,10 +151,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         // Gemini 모델과 로컬 모델을 함께 표시
         val initialModels = mutableListOf<String>()
         initialModels.add("default-model") // 기본 로컬 모델
-        initialModels.add("💎 gemini-1.5-flash") // Gemini 모델들
-        initialModels.add("💎 gemini-1.5-pro")
-        initialModels.add("💎 gemini-2.0-flash-exp")
-        initialModels.add("💎 gemini-2.5-flash")
+        initialModels.add("💎 gemini-2.5-flash") // Gemini 모델
         val modelCombo = createStyledComboBox(initialModels.toTypedArray())
         modelCombo.toolTipText = "모델 선택 (Gemini 또는 LM Studio)"
         bottomButtonPanel.add(modelLabel)
@@ -556,9 +553,6 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                         javax.swing.SwingUtilities.invokeLater {
                             // 기존 Gemini 모델 목록 유지
                             val geminiModels = listOf(
-                                "💎 gemini-1.5-flash",
-                                "💎 gemini-1.5-pro",
-                                "💎 gemini-2.0-flash-exp",
                                 "💎 gemini-2.5-flash"
                             )
                             // Gemini 모델과 LM Studio 모델을 합침
@@ -575,32 +569,15 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             }
         }
 
-        // 콤보박스 선택 변경 시 ChatService에 반영 및 Gemini 모델 선택 시 API Key 확인
+        // 콤보박스 선택 변경 시 ChatService에 반영 (API Key는 중앙서버에서 관리)
         modelCombo.addActionListener {
             val selectedModel = modelCombo.selectedItem as? String ?: return@addActionListener
             
             // Gemini 모델인지 확인 (💎 이모지로 시작하는 모델)
             if (selectedModel.startsWith("💎")) {
                 val geminiModelId = selectedModel.removePrefix("💎 ").trim()
-                val geminiApiKey = chatService.getGeminiApiKey()
-                
-                // API Key가 없으면 에러 메시지 표시 및 기본 모델로 되돌림
-                if (geminiApiKey.isBlank()) {
-                    modelCombo.selectedItem = "default-model"
-                    chatService.setSelectedModel("default-model")
-                    chatService.sendMessage("❌ Gemini 모델을 사용하려면 config.properties 파일에 gemini.apiKey를 설정해주세요.", isUser = false)
-                    JOptionPane.showMessageDialog(
-                        panel,
-                        "Gemini 모델을 사용하려면 config.properties 파일에 gemini.apiKey를 설정해주세요.\n\n" +
-                        "설정 위치: src/main/resources/config.properties\n" +
-                        "예시: gemini.apiKey=YOUR_API_KEY",
-                        "Gemini API Key 필요",
-                        JOptionPane.WARNING_MESSAGE
-                    )
-                } else {
-                    chatService.setSelectedModel(selectedModel)
-                    chatService.sendMessage("Gemini 모델 '$geminiModelId'이 선택되었습니다.", isUser = false)
-                }
+                chatService.setSelectedModel(selectedModel)
+                chatService.sendMessage("Gemini 모델 '$geminiModelId'이 선택되었습니다.", isUser = false)
             } else {
                 // 로컬 모델 선택 시
                 chatService.setSelectedModel(selectedModel)

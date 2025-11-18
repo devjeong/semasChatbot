@@ -67,16 +67,11 @@ class GeminiClient(
      * Gemini API에 채팅 요청을 보내고 응답을 반환합니다.
      * @param userMessage 사용자 입력 메시지
      * @param systemMessage 시스템 프롬프트 (Gemini는 system role을 지원하지 않으므로 user message에 포함)
-     * @param modelId 사용할 모델 ID (기본값: "gemini-1.5-flash" - 최신 안정 모델)
+     * @param modelId 사용할 모델 ID (기본값: "gemini-2.5-flash")
      * @param userId 로그인한 사용자 ID (선택적, 서버에서 사용량 추적 등에 사용)
      * @return LLM 응답 문자열 또는 오류 발생 시 null
      */
-    fun sendChatRequest(userMessage: String, systemMessage: String, modelId: String = "gemini-1.5-flash", userId: Int? = null): String? {
-        if (apiKey.isBlank()) {
-            println("Gemini API 키가 설정되지 않았습니다.")
-            return null
-        }
-        
+    fun sendChatRequest(userMessage: String, systemMessage: String, modelId: String = "gemini-2.5-flash", userId: Int? = null): String? {
         // Gemini API는 system role을 지원하지 않으므로 system message를 user message 앞에 추가
         val fullMessage = if (systemMessage.isNotBlank()) {
             "$systemMessage\n\n$userMessage"
@@ -104,10 +99,9 @@ class GeminiClient(
         val requestBodyJson = gson.toJson(requestBodyMap)
         
         // 중간 서버를 통한 프록시 호출
-        // 요청 본문에 모델 ID, API Key, 사용자 ID를 포함하여 전송
+        // 요청 본문에 모델 ID, 사용자 ID를 포함하여 전송 (API Key는 중앙서버에서 관리)
         val proxyRequestBodyMap = mutableMapOf<String, Any>(
             "modelId" to modelId,
-            "apiKey" to apiKey,
             "requestBody" to requestBodyMap
         )
         
@@ -170,8 +164,7 @@ class GeminiClient(
      * 전체 응답을 델타로 분할하여 전송합니다.
      * @param userMessage 사용자 입력 메시지
      * @param systemMessage 시스템 프롬프트
-     * @param modelId 사용할 모델 ID (기본값: "gemini-1.5-flash" - 최신 안정 모델)
-     *                 지원되는 모델: gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash-exp 등
+     * @param modelId 사용할 모델 ID (기본값: "gemini-2.5-flash")
      * @param userId 로그인한 사용자 ID (선택적, 서버에서 사용량 추적 등에 사용)
      * @param onDelta 델타 콜백 (스트리밍 응답의 각 부분)
      * @param onComplete 완료 콜백
@@ -180,18 +173,13 @@ class GeminiClient(
     fun sendChatRequestStream(
         userMessage: String,
         systemMessage: String,
-        modelId: String = "gemini-1.5-flash",
+        modelId: String = "gemini-2.5-flash",
         userId: Int? = null,
         onDelta: (String) -> Unit,
         onComplete: () -> Unit,
         onError: (Exception) -> Unit
     ) {
-        if (apiKey.isBlank()) {
-            onError(IllegalStateException("Gemini API 키가 설정되지 않았습니다."))
-            return
-        }
-        
-        // 백그라운드 스레드에서 실행
+        // 백그라운드 스레드에서 실행 (API Key는 중앙서버에서 관리)
         Thread {
             try {
                 val response = sendChatRequest(userMessage, systemMessage, modelId, userId)
