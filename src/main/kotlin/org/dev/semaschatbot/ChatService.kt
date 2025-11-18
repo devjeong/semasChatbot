@@ -1520,9 +1520,9 @@ class ChatService(private val project: Project) {
         
         if (isGemini && actualGeminiModelId != null) {
             // Gemini API 사용 (API Key는 중앙서버에서 관리)
-            // 현재 로그인한 사용자 ID 가져오기
+            // 현재 로그인한 사용자 ID 가져오기 (로그인 ID 문자열)
             val currentUserId = try {
-                userService.getCurrentUser()?.id
+                userService.getCurrentUser()?.username
             } catch (e: Exception) {
                 null
             }
@@ -1657,8 +1657,9 @@ class ChatService(private val project: Project) {
                     userService.recordTokens(estimatedInputTokens, estimatedOutputTokens)
                     
                     // LM Studio 통계 전송 (비동기)
+                    // 현재 로그인한 사용자 ID 가져오기 (로그인 ID 문자열)
                     val currentUserId = try {
-                        userService.getCurrentUser()?.id
+                        userService.getCurrentUser()?.username
                     } catch (e: Exception) {
                         null
                     }
@@ -4568,9 +4569,9 @@ button:hover {
                 // 작업목록 생성은 무조건 Gemini API 사용 (사용자 선택 모델 무시)
                 val geminiModelId = "gemini-2.5-flash"
                 
-                // 현재 로그인한 사용자 ID 가져오기
+                // 현재 로그인한 사용자 ID 가져오기 (로그인 ID 문자열)
                 val currentUserId = try {
-                    userService.getCurrentUser()?.id
+                    userService.getCurrentUser()?.username
                 } catch (e: Exception) {
                     null
                 }
@@ -4672,9 +4673,9 @@ button:hover {
                 // 프롬프트 생성은 무조건 Gemini API 사용 (사용자 선택 모델 무시)
                 val geminiModelId = "gemini-2.5-flash"
                 
-                // 현재 로그인한 사용자 ID 가져오기
+                // 현재 로그인한 사용자 ID 가져오기 (로그인 ID 문자열)
                 val currentUserId = try {
-                    userService.getCurrentUser()?.id
+                    userService.getCurrentUser()?.username
                 } catch (e: Exception) {
                     null
                 }
@@ -4749,9 +4750,9 @@ button:hover {
         val modelId = getSelectedModel()
         val systemMessage = "" // 필요시 시스템 메시지 추가
         
-        // 현재 로그인한 사용자 ID 가져오기
+        // 현재 로그인한 사용자 ID 가져오기 (로그인 ID 문자열)
         val currentUserId = try {
-            userService.getCurrentUser()?.id
+            userService.getCurrentUser()?.username
         } catch (e: Exception) {
             null
         }

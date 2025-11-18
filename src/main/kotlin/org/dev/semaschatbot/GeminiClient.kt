@@ -68,10 +68,10 @@ class GeminiClient(
      * @param userMessage 사용자 입력 메시지
      * @param systemMessage 시스템 프롬프트 (Gemini는 system role을 지원하지 않으므로 user message에 포함)
      * @param modelId 사용할 모델 ID (기본값: "gemini-2.5-flash")
-     * @param userId 로그인한 사용자 ID (선택적, 서버에서 사용량 추적 등에 사용)
+     * @param userId 로그인한 사용자 ID (로그인 ID 문자열, 예: "selimjhw", 선택적, 서버에서 사용량 추적 등에 사용)
      * @return LLM 응답 문자열 또는 오류 발생 시 null
      */
-    fun sendChatRequest(userMessage: String, systemMessage: String, modelId: String = "gemini-2.5-flash", userId: Int? = null): String? {
+    fun sendChatRequest(userMessage: String, systemMessage: String, modelId: String = "gemini-2.5-flash", userId: String? = null): String? {
         // Gemini API는 system role을 지원하지 않으므로 system message를 user message 앞에 추가
         val fullMessage = if (systemMessage.isNotBlank()) {
             "$systemMessage\n\n$userMessage"
@@ -165,7 +165,7 @@ class GeminiClient(
      * @param userMessage 사용자 입력 메시지
      * @param systemMessage 시스템 프롬프트
      * @param modelId 사용할 모델 ID (기본값: "gemini-2.5-flash")
-     * @param userId 로그인한 사용자 ID (선택적, 서버에서 사용량 추적 등에 사용)
+     * @param userId 로그인한 사용자 ID (로그인 ID 문자열, 예: "selimjhw", 선택적, 서버에서 사용량 추적 등에 사용)
      * @param onDelta 델타 콜백 (스트리밍 응답의 각 부분)
      * @param onComplete 완료 콜백
      * @param onError 에러 콜백
@@ -174,7 +174,7 @@ class GeminiClient(
         userMessage: String,
         systemMessage: String,
         modelId: String = "gemini-2.5-flash",
-        userId: Int? = null,
+        userId: String? = null,
         onDelta: (String) -> Unit,
         onComplete: () -> Unit,
         onError: (Exception) -> Unit

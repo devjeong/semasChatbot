@@ -19,7 +19,7 @@ class TaskPromptGenerator(private val geminiClient: GeminiClient) {
      * @param requirement 전체 요구사항
      * @param previousTasks 이전에 완료된 작업 목록
      * @param modelId 사용할 Gemini 모델 ID (기본값: "gemini-2.5-flash")
-     * @param userId 로그인한 사용자 ID (선택적, 서버에서 사용량 추적 등에 사용)
+     * @param userId 로그인한 사용자 ID (로그인 ID 문자열, 예: "selimjhw", 선택적, 서버에서 사용량 추적 등에 사용)
      * @return 생성된 프롬프트
      */
     fun generatePromptForTask(
@@ -27,7 +27,7 @@ class TaskPromptGenerator(private val geminiClient: GeminiClient) {
         requirement: String,
         previousTasks: List<Task>,
         modelId: String = "gemini-2.5-flash",
-        userId: Int? = null
+        userId: String? = null
     ): String? {
         try {
             val prompt = buildPromptGenerationRequest(task, requirement, previousTasks)

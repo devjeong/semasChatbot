@@ -31,10 +31,10 @@ class TaskListGenerator(private val geminiClient: GeminiClient) {
      * 
      * @param requirement 사용자 요구사항
      * @param modelId 사용할 Gemini 모델 ID (기본값: "gemini-2.5-flash")
-     * @param userId 로그인한 사용자 ID (선택적, 서버에서 사용량 추적 등에 사용)
+     * @param userId 로그인한 사용자 ID (로그인 ID 문자열, 예: "selimjhw", 선택적, 서버에서 사용량 추적 등에 사용)
      * @return 생성된 Task 리스트 (실패 시 기본 작업 1개 반환)
      */
-    fun generateTaskList(requirement: String, modelId: String = "gemini-2.5-flash", userId: Int? = null): List<Task> {
+    fun generateTaskList(requirement: String, modelId: String = "gemini-2.5-flash", userId: String? = null): List<Task> {
         var lastException: Exception? = null
         
         for (attempt in 1..MAX_RETRIES) {
