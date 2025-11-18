@@ -35,7 +35,7 @@ class GeminiApiEndpointTest {
      * 테스트용 Gemini API Key (실제 API Key로 교체 필요)
      * 주의: 실제 API Key를 사용할 경우 보안에 주의하세요.
      */
-    private val testApiKey = "AIzaSyCbHuQC9T3iMGAkbZhw7EHNSFRi2WH7z4U"
+    private val testApiKey = ""
     
     /**
      * 기본 요청 본문 생성 헬퍼 메서드
