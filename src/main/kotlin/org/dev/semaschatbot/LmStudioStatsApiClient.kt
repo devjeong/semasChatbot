@@ -32,7 +32,7 @@ class LmStudioStatsApiClient(
      */
     fun setServerBaseUrl(url: String) {
         serverBaseUrl = url.trim().removeSuffix("/")
-        println("[LmStudioStatsApiClient] 서버 URL 설정: $serverBaseUrl")
+        Logger.info("LmStudioStatsApiClient", "서버 URL 설정: $serverBaseUrl")
     }
     
     /**
@@ -80,21 +80,21 @@ class LmStudioStatsApiClient(
                 .post(RequestBody.create("application/json".toMediaTypeOrNull(), requestBodyJson))
                 .build()
             
-            println("[LmStudioStatsApiClient] 통계 전송 시도: $serverBaseUrl/api/lm-studio/stats")
-            println("[LmStudioStatsApiClient] 통계 정보: userId=${stats.userId}, modelId=${stats.modelId}, tokens=${stats.totalTokens}, time=${stats.responseTime}ms")
+            Logger.debug("LmStudioStatsApiClient", "통계 전송 시도: $serverBaseUrl/api/lm-studio/stats")
+            Logger.debug("LmStudioStatsApiClient", "통계 정보: userId=${stats.userId}, modelId=${stats.modelId}, tokens=${stats.totalTokens}, time=${stats.responseTime}ms")
             
             client.newCall(request).execute().use { response ->
                 val success = response.isSuccessful
                 if (success) {
-                    println("[LmStudioStatsApiClient] 통계 전송 성공")
+                    Logger.info("LmStudioStatsApiClient", "통계 전송 성공")
                 } else {
                     val errorBody = response.body?.string()
-                    println("[LmStudioStatsApiClient] 통계 전송 실패: HTTP ${response.code} - $errorBody")
+                    Logger.error("LmStudioStatsApiClient", "통계 전송 실패: HTTP ${response.code} - $errorBody")
                 }
                 success
             }
         } catch (e: Exception) {
-            println("[LmStudioStatsApiClient] 통계 전송 중 오류 발생: ${e.message}")
+            Logger.error("LmStudioStatsApiClient", "통계 전송 중 오류 발생: ${e.message}")
             e.printStackTrace()
             false
         }
@@ -115,18 +115,18 @@ class LmStudioStatsApiClient(
             for (attempt in 1..maxRetries) {
                 success = sendStats(stats)
                 if (success) {
-                    println("[LmStudioStatsApiClient] 통계 전송 성공 (시도 $attempt/$maxRetries)")
+                    Logger.info("LmStudioStatsApiClient", "통계 전송 성공 (시도 $attempt/$maxRetries)")
                     break
                 } else {
                     if (attempt < maxRetries) {
                         val delayMs = 1000L * attempt // 지수 백오프
-                        println("[LmStudioStatsApiClient] 통계 전송 실패, ${delayMs}ms 후 재시도 (시도 $attempt/$maxRetries)")
+                        Logger.warn("LmStudioStatsApiClient", "통계 전송 실패, ${delayMs}ms 후 재시도 (시도 $attempt/$maxRetries)")
                         Thread.sleep(delayMs)
                     }
                 }
             }
             if (!success) {
-                println("[LmStudioStatsApiClient] 통계 전송 실패 (모든 재시도 실패, 총 ${maxRetries}회 시도)")
+                Logger.error("LmStudioStatsApiClient", "통계 전송 실패 (모든 재시도 실패, 총 ${maxRetries}회 시도)")
             }
         }.start()
     }

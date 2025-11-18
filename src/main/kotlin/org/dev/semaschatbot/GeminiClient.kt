@@ -36,7 +36,7 @@ class GeminiClient(
      */
     fun setServerBaseUrl(url: String) {
         serverBaseUrl = url.trim().removeSuffix("/")
-        println("[GeminiClient] 서버 URL 설정: $serverBaseUrl")
+        Logger.info("GeminiClient", "서버 URL 설정: $serverBaseUrl")
     }
     
     /**
@@ -115,11 +115,12 @@ class GeminiClient(
         // 중간 서버의 Gemini 프록시 엔드포인트 URL
         val endpointUrl = "$serverBaseUrl$geminiProxyEndpoint"
         
-        println("[GeminiClient] 프록시 호출: $endpointUrl")
-        println("[GeminiClient] 모델 ID: $modelId")
+        Logger.debug("GeminiClient", "프록시 호출: $endpointUrl")
+        Logger.debug("GeminiClient", "모델 ID: $modelId")
         if (userId != null) {
-            println("[GeminiClient] 사용자 ID: $userId")
+            Logger.debug("GeminiClient", "사용자 ID: $userId (타입: ${userId::class.simpleName})")
         }
+        Logger.debug("GeminiClient", "요청 본문: $proxyRequestBodyJson")
         
         val request = Request.Builder()
             .url(endpointUrl)
@@ -128,33 +129,57 @@ class GeminiClient(
         
         try {
             client.newCall(request).execute().use { response ->
+                Logger.debug("GeminiClient", "응답 코드: ${response.code}")
+                Logger.debug("GeminiClient", "응답 헤더: ${response.headers}")
+                
                 if (!response.isSuccessful) {
                     val errorBody = response.body?.string()
-                    println("Gemini API 오류: ${response.code} - $errorBody")
+                    Logger.error("GeminiClient", "오류 응답 본문: $errorBody")
                     throw IOException("Unexpected code ${response.code}: $errorBody")
                 }
                 
                 val responseBody = response.body?.string() ?: return null
+                Logger.debug("GeminiClient", "성공 응답 본문 (처음 500자): ${responseBody.take(500)}")
                 val jsonResponse = gson.fromJson(responseBody, JsonObject::class.java)
                 
                 // Gemini API 응답 형식 파싱
+                Logger.debug("GeminiClient", "JSON 파싱 시작")
                 val candidates = jsonResponse.getAsJsonArray("candidates")
+                Logger.debug("GeminiClient", "candidates 배열 크기: ${candidates?.size() ?: 0}")
+                
                 if (candidates != null && candidates.size() > 0) {
                     val candidate = candidates[0].asJsonObject
+                    Logger.debug("GeminiClient", "candidate 객체: $candidate")
                     val content = candidate.getAsJsonObject("content")
+                    Logger.debug("GeminiClient", "content 객체: $content")
                     val parts = content.getAsJsonArray("parts")
+                    Logger.debug("GeminiClient", "parts 배열 크기: ${parts?.size() ?: 0}")
+                    
                     if (parts != null && parts.size() > 0) {
                         val text = parts[0].asJsonObject.get("text")
-                        return text?.asString
+                        val textValue = text?.asString
+                        Logger.debug("GeminiClient", "추출된 텍스트 길이: ${textValue?.length ?: 0}")
+                        return textValue
+                    } else {
+                        Logger.warn("GeminiClient", "경고: parts 배열이 비어있거나 null입니다.")
                     }
+                } else {
+                    Logger.warn("GeminiClient", "경고: candidates 배열이 비어있거나 null입니다.")
+                    Logger.debug("GeminiClient", "전체 응답: $jsonResponse")
                 }
                 return null
             }
         } catch (e: IOException) {
-            println("Gemini API 호출 오류: ${e.message}")
+            Logger.error("GeminiClient", "IOException 발생: ${e.message}")
+            e.printStackTrace()
             return null
         } catch (e: JsonSyntaxException) {
-            println("Gemini JSON 파싱 오류: ${e.message}")
+            Logger.error("GeminiClient", "JsonSyntaxException 발생: ${e.message}")
+            e.printStackTrace()
+            return null
+        } catch (e: Exception) {
+            Logger.error("GeminiClient", "예상치 못한 오류 발생: ${e.javaClass.simpleName} - ${e.message}")
+            e.printStackTrace()
             return null
         }
     }

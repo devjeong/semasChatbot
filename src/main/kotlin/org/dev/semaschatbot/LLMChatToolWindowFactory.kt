@@ -109,6 +109,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val authButton = createStyledButton("🔐 인증", Color(52, 73, 94), Color.WHITE)
         val analyzeFileButton = createStyledButton("📄 전체 분석", Color(46, 204, 113), Color.WHITE)
         val guideButton = createStyledButton("📖 가이드", Color(230, 126, 34), Color.WHITE)
+        val logButton = createStyledButton("📋 로그", Color(142, 68, 173), Color.WHITE)
         
         val dbConnectButton = createStyledButton("🗄️ DB 연결", Color(0, 128, 128), Color.WHITE)
 
@@ -134,6 +135,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         
         val rightButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 0))
         rightButtonPanel.background = Color(245, 245, 245)
+        rightButtonPanel.add(logButton)
         rightButtonPanel.add(guideButton)
         buttonContainerPanel.add(rightButtonPanel, BorderLayout.EAST)
         
@@ -468,6 +470,17 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         // '전체 파일 분석' 버튼 클릭 시 동작을 정의합니다.
         analyzeFileButton.addActionListener {
             chatService.setFullFileContext()
+        }
+
+        // '로그' 버튼 클릭 시 동작을 정의합니다.
+        logButton.addActionListener {
+            try {
+                val logDialog = org.dev.semaschatbot.ui.LogViewerDialog()
+                logDialog.show()
+            } catch (e: Exception) {
+                chatService.sendMessage("로그 조회 중 오류가 발생했습니다: ${e.message}", isUser = false)
+                e.printStackTrace()
+            }
         }
 
         // '가이드' 버튼 클릭 시 동작을 정의합니다.

@@ -1514,9 +1514,9 @@ class ChatService(private val project: Project) {
         val actualGeminiModelId = if (isGemini) extractGeminiModelId(selectedModelId) else null
         
         // 디버깅: 모델 선택 정보 출력
-        println("[ChatService] 선택된 모델: $selectedModelId")
-        println("[ChatService] Gemini 모델 여부: $isGemini")
-        println("[ChatService] 실제 Gemini 모델 ID: $actualGeminiModelId")
+        Logger.debug("ChatService", "선택된 모델: $selectedModelId")
+        Logger.debug("ChatService", "Gemini 모델 여부: $isGemini")
+        Logger.debug("ChatService", "실제 Gemini 모델 ID: $actualGeminiModelId")
         
         if (isGemini && actualGeminiModelId != null) {
             // Gemini API 사용 (API Key는 중앙서버에서 관리)
@@ -1527,7 +1527,7 @@ class ChatService(private val project: Project) {
                 null
             }
             
-            println("[ChatService] Gemini API 호출 시작: modelId=$actualGeminiModelId${if (currentUserId != null) ", userId=$currentUserId" else ""}")
+            Logger.info("ChatService", "Gemini API 호출 시작: modelId=$actualGeminiModelId${if (currentUserId != null) ", userId=$currentUserId" else ""}")
             geminiClient.sendChatRequestStream(
                 userMessage = prompt,
                 systemMessage = systemMessage,
