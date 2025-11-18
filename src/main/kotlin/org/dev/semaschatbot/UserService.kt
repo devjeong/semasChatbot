@@ -340,37 +340,83 @@ class UserService(private val project: Project) {
                         
                         // 서버 ID가 있고 로컬 ID와 다르면 서버 ID로 업데이트
                         val finalId = if (serverId > 0 && serverId != localId) {
-                            // 서버 ID로 업데이트 (기존 레코드 삭제 후 재생성)
-                            val deleteStmt = conn.prepareStatement("DELETE FROM users WHERE id = ?")
-                            deleteStmt.setInt(1, localId)
-                            deleteStmt.executeUpdate()
-                            deleteStmt.close()
+                            // 서버 ID가 이미 다른 사용자에게 사용 중인지 확인
+                            val checkStmt = conn.prepareStatement("SELECT id FROM users WHERE id = ?")
+                            checkStmt.setInt(1, serverId)
+                            val checkRs = checkStmt.executeQuery()
+                            val serverIdExists = checkRs.next()
+                            checkRs.close()
+                            checkStmt.close()
                             
-                            // 서버 ID를 사용하여 재생성
-                            val serverName = userInfo?.get("name") as? String ?: rs.getString("name")
-                            val serverRole = try {
-                                UserRole.valueOf(userInfo?.get("role") as? String ?: rs.getString("role"))
-                            } catch (e: Exception) {
-                                UserRole.valueOf(rs.getString("role"))
+                            if (serverIdExists) {
+                                // 서버 ID가 이미 다른 사용자에게 사용 중이면 기존 레코드 업데이트
+                                val updateStmt = conn.prepareStatement("""
+                                    UPDATE users 
+                                    SET username = ?, password_hash = ?, name = ?, role = ?, created_at = ?, last_login = ?, is_active = 1
+                                    WHERE id = ?
+                                """.trimIndent())
+                                
+                                val serverName = userInfo?.get("name") as? String ?: rs.getString("name")
+                                val serverRole = try {
+                                    UserRole.valueOf(userInfo?.get("role") as? String ?: rs.getString("role"))
+                                } catch (e: Exception) {
+                                    UserRole.valueOf(rs.getString("role"))
+                                }
+                                val serverCreatedAt = userInfo?.get("created_at") as? String ?: rs.getString("created_at")
+                                
+                                updateStmt.setString(1, rs.getString("username"))
+                                updateStmt.setString(2, rs.getString("password_hash"))
+                                updateStmt.setString(3, serverName)
+                                updateStmt.setString(4, serverRole.name)
+                                updateStmt.setString(5, serverCreatedAt)
+                                updateStmt.setString(6, LocalDateTime.now().format(dateTimeFormatter))
+                                updateStmt.setInt(7, serverId)
+                                updateStmt.executeUpdate()
+                                updateStmt.close()
+                                
+                                // 기존 localId 레코드 삭제 (다른 사용자가 아닌 경우에만)
+                                if (localId != serverId) {
+                                    val deleteStmt = conn.prepareStatement("DELETE FROM users WHERE id = ? AND username = ?")
+                                    deleteStmt.setInt(1, localId)
+                                    deleteStmt.setString(2, username)
+                                    deleteStmt.executeUpdate()
+                                    deleteStmt.close()
+                                }
+                                
+                                serverId
+                            } else {
+                                // 서버 ID가 사용 가능하면 기존 레코드 삭제 후 재생성
+                                val deleteStmt = conn.prepareStatement("DELETE FROM users WHERE id = ?")
+                                deleteStmt.setInt(1, localId)
+                                deleteStmt.executeUpdate()
+                                deleteStmt.close()
+                                
+                                // 서버 ID를 사용하여 재생성
+                                val serverName = userInfo?.get("name") as? String ?: rs.getString("name")
+                                val serverRole = try {
+                                    UserRole.valueOf(userInfo?.get("role") as? String ?: rs.getString("role"))
+                                } catch (e: Exception) {
+                                    UserRole.valueOf(rs.getString("role"))
+                                }
+                                val serverCreatedAt = userInfo?.get("created_at") as? String ?: rs.getString("created_at")
+                                
+                                val insertStmt = conn.prepareStatement("""
+                                    INSERT INTO users (id, username, password_hash, name, role, created_at, last_login, is_active)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                                """.trimIndent())
+                                
+                                insertStmt.setInt(1, serverId)
+                                insertStmt.setString(2, rs.getString("username"))
+                                insertStmt.setString(3, rs.getString("password_hash"))
+                                insertStmt.setString(4, serverName)
+                                insertStmt.setString(5, serverRole.name)
+                                insertStmt.setString(6, serverCreatedAt)
+                                insertStmt.setString(7, LocalDateTime.now().format(dateTimeFormatter))
+                                insertStmt.executeUpdate()
+                                insertStmt.close()
+                                
+                                serverId
                             }
-                            val serverCreatedAt = userInfo?.get("created_at") as? String ?: rs.getString("created_at")
-                            
-                            val insertStmt = conn.prepareStatement("""
-                                INSERT INTO users (id, username, password_hash, name, role, created_at, last_login, is_active)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-                            """.trimIndent())
-                            
-                            insertStmt.setInt(1, serverId)
-                            insertStmt.setString(2, rs.getString("username"))
-                            insertStmt.setString(3, rs.getString("password_hash"))
-                            insertStmt.setString(4, serverName)
-                            insertStmt.setString(5, serverRole.name)
-                            insertStmt.setString(6, serverCreatedAt)
-                            insertStmt.setString(7, LocalDateTime.now().format(dateTimeFormatter))
-                            insertStmt.executeUpdate()
-                            insertStmt.close()
-                            
-                            serverId
                         } else {
                             localId
                         }
@@ -425,6 +471,15 @@ class UserService(private val project: Project) {
                             return Pair(false, "서버에서 사용자 ID를 받지 못했습니다.")
                         }
                         
+                        // 서버 ID가 이미 다른 사용자에게 사용 중인지 확인
+                        val checkStmt = conn.prepareStatement("SELECT id, username FROM users WHERE id = ?")
+                        checkStmt.setInt(1, serverId)
+                        val checkRs = checkStmt.executeQuery()
+                        val serverIdExists = checkRs.next()
+                        val existingUsername = if (serverIdExists) checkRs.getString("username") else null
+                        checkRs.close()
+                        checkStmt.close()
+                        
                         val serverName = userInfo?.get("name") as? String ?: username
                         val serverRole = try {
                             UserRole.valueOf(userInfo?.get("role") as? String ?: "USER")
@@ -438,22 +493,42 @@ class UserService(private val project: Project) {
                         val createdAt = serverCreatedAt
                         val lastLogin = LocalDateTime.now().format(dateTimeFormatter)
                         
-                        // 서버 ID를 명시적으로 사용하여 INSERT
-                        val insertStmt = conn.prepareStatement("""
-                            INSERT INTO users (id, username, password_hash, name, role, created_at, last_login, is_active)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-                        """.trimIndent())
-                        
-                        insertStmt.setInt(1, serverId)
-                        insertStmt.setString(2, username)
-                        insertStmt.setString(3, passwordHash)
-                        insertStmt.setString(4, serverName)
-                        insertStmt.setString(5, serverRole.name)
-                        insertStmt.setString(6, createdAt)
-                        insertStmt.setString(7, lastLogin)
-                        
-                        insertStmt.executeUpdate()
-                        insertStmt.close()
+                        if (serverIdExists && existingUsername != username) {
+                            // 서버 ID가 이미 다른 사용자에게 사용 중이면 UPDATE
+                            Logger.warn("UserService", "서버 ID ${serverId}가 이미 다른 사용자($existingUsername)에게 사용 중입니다. 업데이트합니다.")
+                            val updateStmt = conn.prepareStatement("""
+                                UPDATE users 
+                                SET username = ?, password_hash = ?, name = ?, role = ?, created_at = ?, last_login = ?, is_active = 1
+                                WHERE id = ?
+                            """.trimIndent())
+                            
+                            updateStmt.setString(1, username)
+                            updateStmt.setString(2, passwordHash)
+                            updateStmt.setString(3, serverName)
+                            updateStmt.setString(4, serverRole.name)
+                            updateStmt.setString(5, createdAt)
+                            updateStmt.setString(6, lastLogin)
+                            updateStmt.setInt(7, serverId)
+                            updateStmt.executeUpdate()
+                            updateStmt.close()
+                        } else {
+                            // 서버 ID를 명시적으로 사용하여 INSERT
+                            val insertStmt = conn.prepareStatement("""
+                                INSERT INTO users (id, username, password_hash, name, role, created_at, last_login, is_active)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                            """.trimIndent())
+                            
+                            insertStmt.setInt(1, serverId)
+                            insertStmt.setString(2, username)
+                            insertStmt.setString(3, passwordHash)
+                            insertStmt.setString(4, serverName)
+                            insertStmt.setString(5, serverRole.name)
+                            insertStmt.setString(6, createdAt)
+                            insertStmt.setString(7, lastLogin)
+                            
+                            insertStmt.executeUpdate()
+                            insertStmt.close()
+                        }
                         
                         // 생성된 사용자 정보 조회
                         val newUserStmt = conn.prepareStatement("""
