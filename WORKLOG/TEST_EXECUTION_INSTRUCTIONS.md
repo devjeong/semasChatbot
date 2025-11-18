@@ -22,7 +22,7 @@ private val testApiKey = "YOUR_GEMINI_API_KEY_HERE"
 
 실제 API Key로 변경:
 ```kotlin
-private val testApiKey = "AIzaSyCbHuQC9T3iMGAkbZhw7EHNSFRi2WH7z4U"
+private val testApiKey = ""
 ```
 
 ### 3단계: 서버 실행 확인
