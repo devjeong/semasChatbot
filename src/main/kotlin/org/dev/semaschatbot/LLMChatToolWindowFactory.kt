@@ -32,6 +32,9 @@ import javax.swing.JProgressBar
  * ToolWindowFactory 인터페이스를 구현하여 챗봇 툴 윈도우의 UI를 구성하고 초기화합니다.
  */
 class LLMChatToolWindowFactory : ToolWindowFactory {
+    
+    // 헤더 패널의 상태 레이블을 저장하여 로그인 후 업데이트 가능하도록 함
+    private var statusLabel: JLabel? = null
 
     /**
      * 툴 윈도우의 내용을 생성하고 UI 컴포넌트들을 초기화합니다.
@@ -108,13 +111,12 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val urlButton = createStyledButton("🌐 URL", Color(241, 196, 15), Color.WHITE)
         val authButton = createStyledButton("🔐 인증", Color(52, 73, 94), Color.WHITE)
         val analyzeFileButton = createStyledButton("📄 전체 분석", Color(46, 204, 113), Color.WHITE)
-        val guideButton = createStyledButton("📖 가이드", Color(230, 126, 34), Color.WHITE)
         val logButton = createStyledButton("📋 로그", Color(142, 68, 173), Color.WHITE)
         
         val dbConnectButton = createStyledButton("🗄️ DB 연결", Color(0, 128, 128), Color.WHITE)
 
         // 커스텀 헤더 패널 생성
-        val headerPanel = createHeaderPanel()
+        val headerPanel = createHeaderPanel(chatService)
         
         val topPanel = JPanel(BorderLayout())
         topPanel.background = Color(245, 245, 245)
@@ -136,7 +138,6 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val rightButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 0))
         rightButtonPanel.background = Color(245, 245, 245)
         rightButtonPanel.add(logButton)
-        rightButtonPanel.add(guideButton)
         buttonContainerPanel.add(rightButtonPanel, BorderLayout.EAST)
         
         topPanel.add(buttonContainerPanel, BorderLayout.CENTER)
@@ -483,34 +484,6 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             }
         }
 
-        // '가이드' 버튼 클릭 시 동작을 정의합니다.
-        guideButton.addActionListener {
-            try {
-                // 플러그인 리소스에서 USER_GUIDE.md 파일을 읽기
-                val classLoader = this::class.java.classLoader
-                val resourceStream = classLoader.getResourceAsStream("USER_GUIDE.md")
-                
-                if (resourceStream != null) {
-                    // 리소스에서 문자열로 읽기
-                    val markdownContent = resourceStream.bufferedReader().use { it.readText() }
-                    val htmlContent = createMarkdownViewerHtml(markdownContent)
-                    
-                    // 임시 HTML 파일 생성
-                    val tempDir = Files.createTempDirectory("semas-guide")
-                    val tempHtmlFile = tempDir.resolve("user_guide.html")
-                    Files.write(tempHtmlFile, htmlContent.toByteArray())
-                    
-                    // 웹 브라우저에서 열기
-                    BrowserUtil.browse(tempHtmlFile.toUri())
-                    
-                    chatService.sendMessage("사용자 가이드를 웹 브라우저에서 열었습니다.", isUser = false)
-                } else {
-                    chatService.sendMessage("가이드 파일(USER_GUIDE.md)을 플러그인 리소스에서 찾을 수 없습니다.", isUser = false)
-                }
-            } catch (e: Exception) {
-                chatService.sendMessage("가이드 파일을 여는 중 오류가 발생했습니다: ${e.message}", isUser = false)
-            }
-        }
 
         // 'Reset' 버튼 클릭 시 동작을 정의합니다.
         resetButton.addActionListener {
@@ -685,7 +658,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
      * 모던한 스타일의 헤더 패널을 생성하는 함수입니다.
      * @return 스타일이 적용된 헤더 JPanel
      */
-    private fun createHeaderPanel(): JPanel {
+    private fun createHeaderPanel(chatService: ChatService): JPanel {
         val headerPanel = JPanel(BorderLayout())
         headerPanel.background = Color(173, 216, 230)
         headerPanel.border = EmptyBorder(12, 15, 12, 15)
@@ -740,18 +713,50 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         
         headerPanel.add(titlePanel, BorderLayout.WEST)
         
-        // 상태 표시 (우측)
+        // 상태 표시 (우측) - 로그인한 사용자 정보 표시
         val statusPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
         statusPanel.background = Color(173, 216, 230)
         
-        val statusLabel = JLabel("● 온라인")
-        statusLabel.foreground = Color(46, 204, 113)
+        // 로그인한 사용자 정보 가져오기
+        val currentUser = try {
+            chatService.getCurrentUser()
+        } catch (e: Exception) {
+            null
+        }
+        
+        val statusText = if (currentUser != null) {
+            "${currentUser.name}(${currentUser.username})"
+        } else {
+            "● 오프라인"
+        }
+        
+        val statusLabel = JLabel(statusText)
+        statusLabel.foreground = if (currentUser != null) Color(46, 204, 113) else Color(149, 165, 166)
         statusLabel.font = Font("SansSerif", Font.PLAIN, 12)
         statusPanel.add(statusLabel)
+        
+        // 상태 레이블을 저장하여 나중에 업데이트 가능하도록 함
+        this.statusLabel = statusLabel
         
         headerPanel.add(statusPanel, BorderLayout.EAST)
         
         return headerPanel
+    }
+    
+    /**
+     * 상태 레이블을 업데이트합니다.
+     * 로그인/로그아웃 시 호출되어 헤더의 사용자 정보를 갱신합니다.
+     */
+    private fun updateStatusLabel(user: User?) {
+        statusLabel?.let { label ->
+            val statusText = if (user != null) {
+                "${user.name}(${user.username})"
+            } else {
+                "● 오프라인"
+            }
+            label.text = statusText
+            label.foreground = if (user != null) Color(46, 204, 113) else Color(149, 165, 166)
+        }
     }
 
     /**
@@ -1165,6 +1170,9 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                                     val user = userService.getCurrentUser()
                                     chatService.sendMessage("✅ $message", isUser = false)
                                     chatService.sendMessage("안녕하세요! 소진공 AI 챗봇입니다. 무엇을 도와드릴까요?", isUser = false)
+                                    
+                                    // 헤더의 상태 레이블 업데이트
+                                    updateStatusLabel(user)
                                     
                                     // 로그인 성공 시 자동 인덱싱 시작
                                     chatService.startAutoIndexing()
