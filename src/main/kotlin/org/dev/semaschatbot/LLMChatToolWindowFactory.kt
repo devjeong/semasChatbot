@@ -18,7 +18,6 @@ import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.net.URI
 import java.nio.file.Files
-import java.sql.DriverManager
 import javax.swing.*
 import javax.swing.border.CompoundBorder
 import javax.swing.border.EmptyBorder
@@ -109,12 +108,9 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val resetButton = createStyledButton("🔄 초기화", Color(231, 76, 60), Color.WHITE)
         val promptButton = createStyledButton("⚙️ 프롬프트", Color(155, 89, 182), Color.WHITE)
         val urlButton = createStyledButton("🌐 URL", Color(241, 196, 15), Color.WHITE)
-        val authButton = createStyledButton("🔐 인증", Color(52, 73, 94), Color.WHITE)
         val analyzeFileButton = createStyledButton("📄 전체 분석", Color(46, 204, 113), Color.WHITE)
         val logButton = createStyledButton("📋 로그", Color(142, 68, 173), Color.WHITE)
         val mcpButton = createStyledButton("🔌 MCP 관리", Color(52, 152, 219), Color.WHITE)
-        
-        val dbConnectButton = createStyledButton("🗄️ DB 연결", Color(0, 128, 128), Color.WHITE)
 
         // 커스텀 헤더 패널 생성
         val headerPanel = createHeaderPanel(chatService)
@@ -131,8 +127,6 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         leftButtonPanel.background = Color(245, 245, 245)
         leftButtonPanel.add(promptButton)
         leftButtonPanel.add(urlButton)
-        leftButtonPanel.add(authButton)
-        leftButtonPanel.add(dbConnectButton)
         /*leftButtonPanel.add(analyzeFileButton)*/
         buttonContainerPanel.add(leftButtonPanel, BorderLayout.WEST)
         
@@ -310,162 +304,6 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                             JOptionPane.ERROR_MESSAGE
                         )
                     }
-                }
-            }
-        }
-
-        // 'Auth' 버튼 클릭 시 동작을 정의합니다.
-        authButton.addActionListener {
-            if (chatService.isUserAuthenticated()) {
-                // 이미 인증된 경우, 재인증 여부 확인
-                val result = JOptionPane.showConfirmDialog(
-                    panel,
-                    "이미 인증되어 있습니다.\n다시 인증하시겠습니까?",
-                    "인증 상태",
-                    JOptionPane.YES_NO_OPTION,
-                    JOptionPane.QUESTION_MESSAGE
-                )
-                
-                if (result == JOptionPane.YES_OPTION) {
-                    chatService.resetAuthentication()
-                    showAuthenticationDialog(chatService, panel)
-                }
-            } else {
-                // 인증되지 않은 경우, 인증 다이얼로그 표시
-                showAuthenticationDialog(chatService, panel)
-            }
-        }
-
-        // 'DB 연결' 버튼 클릭 시 동작을 정의합니다.
-        dbConnectButton.addActionListener {
-            val dbPanel = JPanel(GridBagLayout())
-            val constraints = GridBagConstraints()
-            constraints.insets = Insets(5, 5, 5, 5)
-            constraints.anchor = GridBagConstraints.WEST
-
-            constraints.gridx = 0
-            constraints.gridy = 0
-            dbPanel.add(JLabel("환경 선택:"), constraints)
-            val envCombo = JComboBox(arrayOf("개발", "테스트"))
-            constraints.gridx = 1
-            dbPanel.add(envCombo, constraints)
-
-            constraints.gridx = 0
-            constraints.gridy = 1
-            dbPanel.add(JLabel("Host:"), constraints)
-            val hostField = JTextField(20)
-            constraints.gridx = 1
-            dbPanel.add(hostField, constraints)
-
-            constraints.gridx = 0
-            constraints.gridy = 2
-            dbPanel.add(JLabel("Port:"), constraints)
-            val portField = JTextField("8629", 20)
-            constraints.gridx = 1
-            dbPanel.add(portField, constraints)
-
-            constraints.gridx = 0
-            constraints.gridy = 3
-            dbPanel.add(JLabel("Database Name:"), constraints)
-            val dbNameField = JTextField(20)
-            constraints.gridx = 1
-            dbPanel.add(dbNameField, constraints)
-
-            constraints.gridx = 0
-            constraints.gridy = 4
-            dbPanel.add(JLabel("User:"), constraints)
-            val userField = JTextField(20)
-            constraints.gridx = 1
-            dbPanel.add(userField, constraints)
-
-            constraints.gridx = 0
-            constraints.gridy = 5
-            dbPanel.add(JLabel("Password:"), constraints)
-            val passwordField = JPasswordField(20)
-            constraints.gridx = 1
-            dbPanel.add(passwordField, constraints)
-
-            // Add target tables field
-            constraints.gridx = 0
-            constraints.gridy = 6
-            dbPanel.add(JLabel("대상 테이블 (콤마 구분, 비우면 전체):"), constraints)
-            val targetTablesField = JTextField(20)
-            constraints.gridx = 1
-            dbPanel.add(targetTablesField, constraints)
-
-            // Auto-fill based on environment selection
-            envCombo.addActionListener {
-                val selectedEnv = envCombo.selectedItem as String
-                if (selectedEnv == "개발") {
-                    hostField.text = "10.64.224.15"
-                    portField.text = "8629"
-                    dbNameField.text = "db_dev"
-                    userField.text = "SEMAS24"
-                    passwordField.text = "SEMAS24!"
-                } else if (selectedEnv == "테스트") {
-                    hostField.text = "10.64.224.50"
-                    portField.text = "8629"
-                    dbNameField.text = "semas24"
-                    userField.text = "SEMAS24"
-                    passwordField.text = "SEMAS24!"
-                }
-            }
-
-            // Trigger initial auto-fill
-            envCombo.setSelectedIndex(0)  // Default to '개발'
-
-            // Add test connection button
-            val testButton = JButton("연결 테스트")
-            constraints.gridx = 0
-            constraints.gridy = 7
-            constraints.gridwidth = 2
-            dbPanel.add(testButton, constraints)
-
-            testButton.addActionListener {
-                val dbType = "Tibero"
-                val host = hostField.text.trim()
-                val port = portField.text.trim()
-                val dbName = dbNameField.text.trim()
-                val user = userField.text.trim()
-                val password = String(passwordField.password).trim()
-                val targetTables = targetTablesField.text.trim()
-
-                if (host.isNotEmpty() && port.isNotEmpty() && dbName.isNotEmpty() && user.isNotEmpty() && password.isNotEmpty()) {
-                    try {
-                        Class.forName("com.tmax.tibero.jdbc.TbDriver")
-                        val url = "jdbc:tibero:thin:@$host:$port:$dbName"
-                        DriverManager.getConnection(url, user, password).use { conn ->
-                            JOptionPane.showMessageDialog(dbPanel, "✅ 연결 테스트 성공!", "테스트 결과", JOptionPane.INFORMATION_MESSAGE)
-                        }
-                    } catch (e: Exception) {
-                        JOptionPane.showMessageDialog(dbPanel, "❌ 연결 테스트 실패: ${e.message}", "테스트 결과", JOptionPane.ERROR_MESSAGE)
-                    }
-                } else {
-                    JOptionPane.showMessageDialog(dbPanel, "모든 필드를 입력해주세요.", "입력 오류", JOptionPane.ERROR_MESSAGE)
-                }
-            }
-
-            val result = JOptionPane.showConfirmDialog(
-                panel,
-                dbPanel,
-                "DB 연결 정보 입력",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-            )
-
-            if (result == JOptionPane.OK_OPTION) {
-                val dbType = "Tibero"
-                val host = hostField.text.trim()
-                val port = portField.text.trim()
-                val dbName = dbNameField.text.trim()
-                val user = userField.text.trim()
-                val password = String(passwordField.password).trim()
-                val targetTables = targetTablesField.text.trim()
-
-                if (host.isNotEmpty() && port.isNotEmpty() && dbName.isNotEmpty() && user.isNotEmpty() && password.isNotEmpty()) {
-                    chatService.connectToDB(dbType, host, port, dbName, user, password, targetTables)
-                } else {
-                    JOptionPane.showMessageDialog(panel, "모든 필드를 입력해주세요.", "입력 오류", JOptionPane.ERROR_MESSAGE)
                 }
             }
         }
