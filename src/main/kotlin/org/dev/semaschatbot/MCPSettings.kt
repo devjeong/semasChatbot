@@ -40,8 +40,11 @@ class MCPSettings(private val project: Project) {
      * MCP 기능 활성화 상태를 설정합니다.
      */
     fun setMCPEnabled(enabled: Boolean) {
+        val oldValue = mcpEnabled
         mcpEnabled = enabled
+        Logger.info("MCPSettings", "MCP 기능 활성화 상태 변경: $oldValue -> $enabled")
         saveSettings()
+        Logger.info("MCPSettings", "설정 저장 후 확인: mcpEnabled=$mcpEnabled, 파일 존재=${configFile.exists()}")
     }
     
     /**
@@ -104,53 +107,101 @@ class MCPSettings(private val project: Project) {
                 connectionJson.addProperty("mcpName", connection.mcpName)
                 connectionJson.addProperty("mcpEndpoint", connection.mcpEndpoint)
                 connectionJson.addProperty("isConnected", connection.isConnected)
-                connectionJson.addProperty("connectedAt", connection.connectedAt)
+                // null 안전하게 처리
+                if (connection.connectedAt != null) {
+                    connectionJson.addProperty("connectedAt", connection.connectedAt)
+                } else {
+                    connectionJson.add("connectedAt", com.google.gson.JsonNull.INSTANCE)
+                }
                 connectionsArray.add(connectionJson)
             }
             settingsJson.add("mcpConnections", connectionsArray)
             
+            // 설정 파일 디렉토리 생성
+            configFile.parentFile?.mkdirs()
+            
+            // 파일 저장
             configFile.writeText(gson.toJson(settingsJson))
-            Logger.debug("MCPSettings", "MCP 설정 저장 완료")
+            Logger.info("MCPSettings", "MCP 설정 저장 완료: 파일=${configFile.absolutePath}, 활성화=$mcpEnabled, 연결=${mcpConnections.size}개")
         } catch (e: Exception) {
             Logger.error("MCPSettings", "설정 저장 오류: ${e.message}")
+            e.printStackTrace()
         }
     }
     
     /**
      * 설정을 파일에서 로드합니다.
+     * 외부에서도 호출 가능하도록 public으로 유지합니다.
      */
     fun loadSettings() {
         try {
             if (!configFile.exists()) {
-                Logger.debug("MCPSettings", "설정 파일이 없습니다. 기본값 사용")
+                Logger.debug("MCPSettings", "설정 파일이 없습니다. 기본값 사용: ${configFile.absolutePath}")
+                // 기본값으로 초기화
+                mcpEnabled = false
+                mcpConnections.clear()
                 return
             }
             
-            val settingsJson = gson.fromJson(configFile.readText(), JsonObject::class.java)
+            val fileContent = configFile.readText()
+            if (fileContent.isBlank()) {
+                Logger.debug("MCPSettings", "설정 파일이 비어있습니다. 기본값 사용")
+                mcpEnabled = false
+                mcpConnections.clear()
+                return
+            }
+            
+            val settingsJson = gson.fromJson(fileContent, JsonObject::class.java)
             
             // MCP 활성화 상태 로드
-            mcpEnabled = settingsJson.get("mcpEnabled")?.asBoolean ?: false
+            val enabledElement = settingsJson.get("mcpEnabled")
+            mcpEnabled = when {
+                enabledElement == null -> false
+                enabledElement.isJsonNull -> false
+                else -> enabledElement.asBoolean
+            }
             
             // MCP 연결 정보 로드
             mcpConnections.clear()
-            val connectionsArray = settingsJson.getAsJsonArray("mcpConnections")
-            connectionsArray?.forEach { element ->
-                val connectionJson = element.asJsonObject
-                val connection = MCPConnection(
-                    mcpId = connectionJson.get("mcpId")?.asString ?: "",
-                    mcpName = connectionJson.get("mcpName")?.asString ?: "",
-                    mcpEndpoint = connectionJson.get("mcpEndpoint")?.asString ?: "",
-                    isConnected = connectionJson.get("isConnected")?.asBoolean ?: false,
-                    connectedAt = connectionJson.get("connectedAt")?.asLong
-                )
-                if (connection.mcpId.isNotEmpty()) {
-                    mcpConnections[connection.mcpId] = connection
+            val connectionsElement = settingsJson.get("mcpConnections")
+            if (connectionsElement != null && connectionsElement.isJsonArray) {
+                val connectionsArray = connectionsElement.asJsonArray
+                connectionsArray.forEach { element ->
+                    if (element.isJsonObject) {
+                        val connectionJson = element.asJsonObject
+                        val connectedAtElement = connectionJson.get("connectedAt")
+                        val connectedAt = when {
+                            connectedAtElement == null -> null
+                            connectedAtElement.isJsonNull -> null
+                            else -> try {
+                                connectedAtElement.asLong
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+                        
+                        val connection = MCPConnection(
+                            mcpId = connectionJson.get("mcpId")?.asString ?: "",
+                            mcpName = connectionJson.get("mcpName")?.asString ?: "",
+                            mcpEndpoint = connectionJson.get("mcpEndpoint")?.asString ?: "",
+                            isConnected = connectionJson.get("isConnected")?.asBoolean ?: false,
+                            connectedAt = connectedAt
+                        )
+                        if (connection.mcpId.isNotEmpty()) {
+                            mcpConnections[connection.mcpId] = connection
+                        }
+                    }
                 }
             }
             
-            Logger.info("MCPSettings", "MCP 설정 로드 완료: 활성화=${mcpEnabled}, 연결=${mcpConnections.size}개")
+            Logger.info("MCPSettings", "MCP 설정 로드 완료: 파일=${configFile.absolutePath}, 활성화=$mcpEnabled, 연결=${mcpConnections.size}개")
         } catch (e: Exception) {
             Logger.error("MCPSettings", "설정 로드 오류: ${e.message}")
+            Logger.error("MCPSettings", "설정 파일 경로: ${configFile.absolutePath}")
+            e.printStackTrace()
+            // 오류 발생 시 기본값으로 초기화
+            mcpEnabled = false
+            mcpConnections.clear()
         }
     }
     

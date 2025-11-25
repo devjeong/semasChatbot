@@ -111,6 +111,11 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val analyzeFileButton = createStyledButton("📄 전체 분석", Color(46, 204, 113), Color.WHITE)
         val logButton = createStyledButton("📋 로그", Color(142, 68, 173), Color.WHITE)
         val mcpButton = createStyledButton("🔌 MCP 관리", Color(52, 152, 219), Color.WHITE)
+        val taskButton = createStyledButton("📋 작업관리", Color(46, 204, 113), Color.WHITE)
+        
+        // 작업관리 버튼은 항상 활성화
+        taskButton.isEnabled = true
+        taskButton.toolTipText = "작업 목록을 조회합니다."
 
         // 커스텀 헤더 패널 생성
         val headerPanel = createHeaderPanel(chatService)
@@ -132,6 +137,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         
         val rightButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 0))
         rightButtonPanel.background = Color(245, 245, 245)
+        rightButtonPanel.add(taskButton)
         rightButtonPanel.add(mcpButton)
         rightButtonPanel.add(logButton)
         buttonContainerPanel.add(rightButtonPanel, BorderLayout.EAST)
@@ -311,6 +317,18 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         // '전체 파일 분석' 버튼 클릭 시 동작을 정의합니다.
         analyzeFileButton.addActionListener {
             chatService.setFullFileContext()
+        }
+
+        // '작업관리' 버튼 클릭 시 동작을 정의합니다.
+        // MCP 관리 상태와 상관없이 항상 접근 가능
+        taskButton.addActionListener {
+            try {
+                val taskDialog = org.dev.semaschatbot.ui.TaskManagementDialog()
+                taskDialog.show()
+            } catch (e: Exception) {
+                chatService.sendMessage("작업 관리 다이얼로그 열기 중 오류가 발생했습니다: ${e.message}", isUser = false)
+                e.printStackTrace()
+            }
         }
 
         // 'MCP 관리' 버튼 클릭 시 동작을 정의합니다.
@@ -568,9 +586,9 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val statusPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
         statusPanel.background = Color(173, 216, 230)
         
-        // 로그인한 사용자 정보 가져오기
+        // 로그인한 사용자 정보 가져오기 (SessionManager 사용)
         val currentUser = try {
-            chatService.getCurrentUser()
+            SessionManager.getInstance().getCurrentUser()
         } catch (e: Exception) {
             null
         }
@@ -607,6 +625,34 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
             }
             label.text = statusText
             label.foreground = if (user != null) Color(46, 204, 113) else Color(149, 165, 166)
+        }
+    }
+    
+    /**
+     * 작업관리 버튼의 활성화 상태를 업데이트합니다.
+     * 세션 기반으로 MCP 기능 활성화 및 작업 관리 MCP 연결 상태를 확인합니다.
+     */
+    private fun updateTaskButtonState(taskButton: JButton, project: Project) {
+        try {
+            val sessionManager = SessionManager.getInstance()
+            val isAvailable = sessionManager.isTaskManagementAvailable(project)
+            
+            taskButton.isEnabled = isAvailable
+            
+            if (!isAvailable) {
+                val mcpSettings = MCPSettings(project)
+                if (!mcpSettings.isMCPEnabled()) {
+                    taskButton.toolTipText = "MCP 기능이 비활성화되어 있습니다. MCP 관리에서 활성화해주세요."
+                } else {
+                    taskButton.toolTipText = "작업 관리 MCP 서버가 연결되어 있지 않습니다. MCP 관리에서 연결해주세요."
+                }
+            } else {
+                taskButton.toolTipText = "작업 목록을 조회합니다."
+            }
+        } catch (e: Exception) {
+            Logger.error("LLMChatToolWindowFactory", "작업관리 버튼 상태 업데이트 오류: ${e.message}")
+            taskButton.isEnabled = false
+            taskButton.toolTipText = "작업관리 버튼 상태 확인 중 오류가 발생했습니다."
         }
     }
 
@@ -1018,7 +1064,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
                                 loadingDialog.dispose()
                                 
                                 if (success) {
-                                    val user = userService.getCurrentUser()
+                                    val user = SessionManager.getInstance().getCurrentUser()
                                     chatService.sendMessage("✅ $message", isUser = false)
                                     chatService.sendMessage("안녕하세요! 소진공 AI 챗봇입니다. 무엇을 도와드릴까요?", isUser = false)
                                     

@@ -14,9 +14,8 @@ import java.time.format.DateTimeFormatter
 @Service(Service.Level.PROJECT)
 class UserService(private val project: Project) {
     
-    // 현재 로그인한 사용자 (메모리에만 저장)
-    @Volatile
-    private var currentUser: User? = null
+    // SessionManager 인스턴스 (세션 관리용)
+    private val sessionManager = SessionManager.getInstance()
     
     // AuthApiClient 인스턴스 (서버 API 통신용)
     private val authApiClient = AuthApiClient("http://192.168.18.53:5000")
@@ -134,7 +133,8 @@ class UserService(private val project: Project) {
                 createdAt = serverCreatedAt,
                 isActive = true
             )
-            currentUser = user
+            // 세션 생성
+            sessionManager.createSession(user)
         }
         
         return Pair(true, message)
@@ -184,7 +184,8 @@ class UserService(private val project: Project) {
                 lastLogin = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
                 isActive = true
             )
-            currentUser = user
+            // 세션 생성
+            sessionManager.createSession(user)
             return Pair(true, "로그인 성공! 환영합니다, ${user.name}님!")
         } else {
             return Pair(false, "서버에서 사용자 ID를 받지 못했습니다.")
@@ -195,18 +196,20 @@ class UserService(private val project: Project) {
      * 로그아웃을 처리합니다.
      */
     fun logout() {
-        currentUser = null
+        sessionManager.clearSession()
     }
     
     /**
      * 현재 로그인한 사용자를 반환합니다.
+     * 세션 관리자를 통해 조회합니다.
      */
-    fun getCurrentUser(): User? = currentUser
+    fun getCurrentUser(): User? = sessionManager.getCurrentUser()
     
     /**
      * 사용자가 로그인되어 있는지 확인합니다.
+     * 세션 관리자를 통해 확인합니다.
      */
-    fun isLoggedIn(): Boolean = currentUser != null
+    fun isLoggedIn(): Boolean = sessionManager.isLoggedIn()
     
     /**
      * 메시지 사용량을 기록합니다.

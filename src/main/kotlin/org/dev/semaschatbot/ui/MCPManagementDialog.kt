@@ -21,6 +21,7 @@ class MCPManagementDialog : DialogWrapper(true) {
     
     private lateinit var mcpEnabledToggle: JToggleButton
     private lateinit var refreshButton: JButton
+    private lateinit var testButton: JButton
     private lateinit var mcpListPanel: JPanel
     private lateinit var statusLabel: JLabel
     
@@ -46,14 +47,39 @@ class MCPManagementDialog : DialogWrapper(true) {
             Logger.debug("MCPManagementDialog", "ChatService 초기화 대기 중")
         }
         
-        // 초기 상태 설정
-        mcpEnabledToggle.isSelected = mcpSettings.isMCPEnabled()
+        // 초기 상태 설정 (설정 파일에서 로드)
+        mcpSettings.loadSettings() // 명시적으로 설정 로드
+        val initialMCPEnabled = mcpSettings.isMCPEnabled()
+        Logger.info("MCPManagementDialog", "초기 MCP 활성화 상태: $initialMCPEnabled")
+        
+        mcpEnabledToggle.isSelected = initialMCPEnabled
         updateUIState()
         
-        // MCP 기능이 활성화된 경우 목록 조회
-        if (mcpSettings.isMCPEnabled()) {
+        // 초기 작업 관리 MCP 연결 상태 확인 및 세션 동기화
+        if (initialMCPEnabled) {
+            val allConnections = mcpSettings.getAllMCPConnections()
+            Logger.info("MCPManagementDialog", "저장된 MCP 연결 수: ${allConnections.size}")
+            allConnections.forEach { (id, connection) ->
+                Logger.info("MCPManagementDialog", "저장된 연결: id=$id, name=${connection.mcpName}, connected=${connection.isConnected}")
+            }
+            
+            val taskMCPConnected = allConnections.values.any { connection ->
+                connection.isConnected && (
+                    connection.mcpName.contains("task", ignoreCase = true) ||
+                    connection.mcpName.contains("작업", ignoreCase = true) ||
+                    connection.mcpId.contains("task", ignoreCase = true) ||
+                    connection.mcpId.contains("작업", ignoreCase = true)
+                )
+            }
+            Logger.info("MCPManagementDialog", "초기 작업 관리 MCP 연결 상태: $taskMCPConnected")
+            SessionManager.getInstance().setTaskMCPConnected(taskMCPConnected)
             loadMCPList()
+        } else {
+            SessionManager.getInstance().setTaskMCPConnected(false)
         }
+        
+        // 초기화 시 자동으로 연결 테스트 실행 (선택사항)
+        // runConnectionTest()
     }
     
     override fun createCenterPanel(): JPanel {
@@ -90,7 +116,7 @@ class MCPManagementDialog : DialogWrapper(true) {
         val panel = JPanel(BorderLayout())
         panel.border = EmptyBorder(0, 0, 10, 0)
         
-        // 왼쪽: MCP 기능 토글
+        // 왼쪽: MCP 기능 토글 및 테스트 버튼
         val togglePanel = JPanel(FlowLayout(FlowLayout.LEFT))
         togglePanel.background = Color(245, 245, 245)
         
@@ -113,6 +139,8 @@ class MCPManagementDialog : DialogWrapper(true) {
             } else {
                 // 비활성화 시 모든 연결 해제
                 disconnectAllMCPs()
+                // 작업 관리 MCP 세션 상태도 초기화
+                SessionManager.getInstance().setTaskMCPConnected(false)
             }
         }
         updateToggleButton()
@@ -125,9 +153,17 @@ class MCPManagementDialog : DialogWrapper(true) {
         
         panel.add(togglePanel, BorderLayout.WEST)
         
-        // 오른쪽: 새로고침 버튼
+        // 오른쪽: 새로고침 및 테스트 버튼
         val refreshPanel = JPanel(FlowLayout(FlowLayout.RIGHT))
         refreshPanel.background = Color(245, 245, 245)
+        
+        testButton = JButton("🧪 연결 테스트")
+        testButton.font = Font("SansSerif", Font.PLAIN, 11)
+        testButton.foreground = Color(46, 204, 113)
+        testButton.addActionListener {
+            runConnectionTest()
+        }
+        refreshPanel.add(testButton)
         
         refreshButton = JButton("🔄 새로고침")
         refreshButton.font = Font("SansSerif", Font.PLAIN, 11)
@@ -239,10 +275,28 @@ class MCPManagementDialog : DialogWrapper(true) {
             mcpListPanel.add(emptyLabel)
         } else {
             mcpList.forEach { mcpItem ->
+                // MCP 정보 로깅 (디버깅용)
                 val savedConnection = mcpSettings.getMCPConnection(mcpItem.id)
+                val isConnected = savedConnection?.isConnected ?: false
+                
+                Logger.info("MCPManagementDialog", "MCP 항목 로드: name='${mcpItem.name}', id='${mcpItem.id}', description='${mcpItem.description}', isConnected=$isConnected")
+                
+                // 작업 관리 MCP인지 확인
+                val nameCheck = mcpItem.name.contains("task", ignoreCase = true) || mcpItem.name.contains("작업", ignoreCase = true)
+                val idCheck = mcpItem.id.contains("task", ignoreCase = true) || mcpItem.id.contains("작업", ignoreCase = true)
+                val descCheck = mcpItem.description?.contains("task", ignoreCase = true) == true || 
+                               mcpItem.description?.contains("작업", ignoreCase = true) == true
+                val isTaskMCP = nameCheck || idCheck || descCheck
+                
+                if (isTaskMCP && isConnected) {
+                    Logger.info("MCPManagementDialog", "작업 관리 MCP 연결 상태 발견: ${mcpItem.name} (id: ${mcpItem.id})")
+                    // 세션 상태 동기화
+                    SessionManager.getInstance().setTaskMCPConnected(true)
+                }
+                
                 val itemPanel = MCPItemPanel(
                     mcpItem = mcpItem,
-                    isConnected = savedConnection?.isConnected ?: false,
+                    isConnected = isConnected,
                     onToggle = { mcpId, enabled ->
                         if (enabled) {
                             connectMCP(mcpId)
@@ -288,6 +342,26 @@ class MCPManagementDialog : DialogWrapper(true) {
                 )
                 mcpSettings.setMCPConnection(mcpId, connection)
                 
+                // 작업 관리 MCP인 경우 세션 상태 업데이트
+                val nameCheck = mcpItem.name.contains("task", ignoreCase = true) || mcpItem.name.contains("작업", ignoreCase = true)
+                val idCheck = mcpItem.id.contains("task", ignoreCase = true) || mcpItem.id.contains("작업", ignoreCase = true)
+                val descCheck = mcpItem.description?.contains("task", ignoreCase = true) == true || 
+                               mcpItem.description?.contains("작업", ignoreCase = true) == true
+                
+                val isTaskMCP = nameCheck || idCheck || descCheck
+                
+                Logger.info("MCPManagementDialog", "MCP 연결 체크: name='${mcpItem.name}', id='${mcpItem.id}', nameCheck=$nameCheck, idCheck=$idCheck, descCheck=$descCheck, isTaskMCP=$isTaskMCP")
+                
+                if (isTaskMCP) {
+                    Logger.info("MCPManagementDialog", "작업 관리 MCP 연결 감지: ${mcpItem.name} (id: ${mcpItem.id})")
+                    val sessionManager = SessionManager.getInstance()
+                    sessionManager.setTaskMCPConnected(true)
+                    val updatedState = sessionManager.isTaskMCPConnected()
+                    Logger.info("MCPManagementDialog", "세션 상태 업데이트 완료: $updatedState")
+                } else {
+                    Logger.debug("MCPManagementDialog", "일반 MCP 연결: ${mcpItem.name} (id: ${mcpItem.id})")
+                }
+                
                 // 서버로 연결 정보 전송
                 sendConnectionInfoToServer(mcpItem, "connect", connectedAt)
                 
@@ -295,6 +369,17 @@ class MCPManagementDialog : DialogWrapper(true) {
                     itemPanel.setConnecting(false)
                     itemPanel.setConnected(true)
                     updateStatusLabel("연결됨: ${mcpItem.name}", Color(46, 204, 113))
+                    
+                    // 작업 관리 MCP 연결 상태 확인 및 로그
+                    val sessionManager = SessionManager.getInstance()
+                    val isTaskMCPConnected = sessionManager.isTaskMCPConnected()
+                    Logger.info("MCPManagementDialog", "연결 완료 후 세션 상태 확인: taskMCPConnected=$isTaskMCPConnected")
+                    
+                    // 작업 관리 MCP인 경우 추가 확인
+                    if (isTaskMCP) {
+                        val updatedState = sessionManager.isTaskMCPConnected()
+                        Logger.info("MCPManagementDialog", "작업 관리 MCP 연결 후 최종 세션 상태: $updatedState")
+                    }
                 }
             } catch (e: Exception) {
                 SwingUtilities.invokeLater {
@@ -333,6 +418,26 @@ class MCPManagementDialog : DialogWrapper(true) {
                 )
                 mcpSettings.setMCPConnection(mcpId, connection)
                 
+                // 작업 관리 MCP인 경우 세션 상태 업데이트
+                val nameCheck = mcpItem.name.contains("task", ignoreCase = true) || mcpItem.name.contains("작업", ignoreCase = true)
+                val idCheck = mcpItem.id.contains("task", ignoreCase = true) || mcpItem.id.contains("작업", ignoreCase = true)
+                val descCheck = mcpItem.description?.contains("task", ignoreCase = true) == true || 
+                               mcpItem.description?.contains("작업", ignoreCase = true) == true
+                
+                val isTaskMCP = nameCheck || idCheck || descCheck
+                
+                Logger.info("MCPManagementDialog", "MCP 연결 해제 체크: name='${mcpItem.name}', id='${mcpItem.id}', nameCheck=$nameCheck, idCheck=$idCheck, descCheck=$descCheck, isTaskMCP=$isTaskMCP")
+                
+                if (isTaskMCP) {
+                    Logger.info("MCPManagementDialog", "작업 관리 MCP 연결 해제 감지: ${mcpItem.name} (id: ${mcpItem.id})")
+                    val sessionManager = SessionManager.getInstance()
+                    sessionManager.setTaskMCPConnected(false)
+                    val updatedState = sessionManager.isTaskMCPConnected()
+                    Logger.info("MCPManagementDialog", "세션 상태 업데이트 완료: $updatedState")
+                } else {
+                    Logger.debug("MCPManagementDialog", "일반 MCP 연결 해제: ${mcpItem.name} (id: ${mcpItem.id})")
+                }
+                
                 // 서버로 연결 해제 정보 전송
                 sendConnectionInfoToServer(mcpItem, "disconnect", disconnectedAt)
                 
@@ -368,14 +473,16 @@ class MCPManagementDialog : DialogWrapper(true) {
      */
     private fun sendConnectionInfoToServer(mcpItem: MCPListItem, action: String, timestamp: Long) {
         try {
-            val userService = project.getService(UserService::class.java)
-            val currentUser = userService?.getCurrentUser()
+            val sessionManager = SessionManager.getInstance()
+            val currentUser = sessionManager.getCurrentUser()
             val userId = currentUser?.username ?: "unknown"
             val username = currentUser?.name ?: "Unknown User"
             
             val ipAddress = getLocalIpAddress()
+            // ISO 8601 형식으로 변환 (UTC 기준, 밀리초 제거)
             val dateTime = Instant.ofEpochMilli(timestamp)
-                .atZone(ZoneId.systemDefault())
+                .atZone(ZoneId.of("UTC"))
+                .withNano(0) // 밀리초 제거
                 .format(DateTimeFormatter.ISO_INSTANT)
             
             val connectionInfo = if (action == "connect") {
@@ -446,6 +553,70 @@ class MCPManagementDialog : DialogWrapper(true) {
     private fun updateStatusLabel(text: String, color: Color) {
         statusLabel.text = text
         statusLabel.foreground = color
+    }
+    
+    /**
+     * MCP 연결 테스트 실행
+     */
+    private fun runConnectionTest() {
+        val username = SessionManager.getInstance().getCurrentUsername() ?: "selimjhw"
+        
+        updateStatusLabel("연결 테스트 진행 중...", Color(52, 152, 219))
+        testButton.isEnabled = false
+        
+        // 백그라운드 스레드에서 테스트 실행
+        Thread {
+            try {
+                val result = MCPConnectionTest.testConnection(username)
+                
+                SwingUtilities.invokeLater {
+                    testButton.isEnabled = true
+                    
+                    if (result.success) {
+                        updateStatusLabel("연결 테스트 성공", Color(46, 204, 113))
+                        showTestResultDialog(result)
+                    } else {
+                        updateStatusLabel("연결 테스트 실패", Color(231, 76, 60))
+                        showTestResultDialog(result)
+                    }
+                }
+            } catch (e: Exception) {
+                SwingUtilities.invokeLater {
+                    testButton.isEnabled = true
+                    updateStatusLabel("연결 테스트 오류: ${e.message}", Color(231, 76, 60))
+                    Logger.error("MCPManagementDialog", "연결 테스트 오류: ${e.message}")
+                    e.printStackTrace()
+                    
+                    showErrorDialog("연결 테스트 중 오류가 발생했습니다:\n${e.message}")
+                }
+            }
+        }.start()
+    }
+    
+    /**
+     * 테스트 결과 다이얼로그 표시
+     */
+    private fun showTestResultDialog(result: TestResult) {
+        val message = buildString {
+            append(result.message)
+            if (result.details.isNotEmpty()) {
+                append("\n\n")
+                append(result.details.joinToString("\n"))
+            }
+        }
+        
+        val messageType = if (result.success) {
+            JOptionPane.INFORMATION_MESSAGE
+        } else {
+            JOptionPane.ERROR_MESSAGE
+        }
+        
+        JOptionPane.showMessageDialog(
+            contentPanel,
+            message,
+            if (result.success) "연결 테스트 성공" else "연결 테스트 실패",
+            messageType
+        )
     }
     
     /**

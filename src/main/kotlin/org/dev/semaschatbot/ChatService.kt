@@ -546,9 +546,10 @@ class ChatService(private val project: Project) {
     
     /**
      * 현재 로그인한 사용자 정보를 반환합니다.
+     * 세션 관리자를 통해 조회합니다.
      */
     fun getCurrentUser(): User? {
-        return userService.getCurrentUser()
+        return SessionManager.getInstance().getCurrentUser()
     }
     
     /**
@@ -1516,7 +1517,7 @@ class ChatService(private val project: Project) {
             // Gemini API 사용 (API Key는 중앙서버에서 관리)
             // 현재 로그인한 사용자 ID 가져오기 (로그인 ID 문자열)
             val currentUserId = try {
-                userService.getCurrentUser()?.username
+                SessionManager.getInstance().getCurrentUsername()
             } catch (e: Exception) {
                 null
             }
@@ -1653,7 +1654,7 @@ class ChatService(private val project: Project) {
                     // LM Studio 통계 전송 (비동기)
                     // 현재 로그인한 사용자 ID 가져오기 (로그인 ID 문자열)
                     val currentUserId = try {
-                        userService.getCurrentUser()?.username
+                        SessionManager.getInstance().getCurrentUsername()
                     } catch (e: Exception) {
                         null
                     }
@@ -4365,7 +4366,7 @@ button:hover {
                 
                 // 현재 로그인한 사용자 ID 가져오기 (로그인 ID 문자열)
                 val currentUserId = try {
-                    userService.getCurrentUser()?.username
+                    SessionManager.getInstance().getCurrentUsername()
                 } catch (e: Exception) {
                     null
                 }
@@ -4469,7 +4470,7 @@ button:hover {
                 
                 // 현재 로그인한 사용자 ID 가져오기 (로그인 ID 문자열)
                 val currentUserId = try {
-                    userService.getCurrentUser()?.username
+                    SessionManager.getInstance().getCurrentUsername()
                 } catch (e: Exception) {
                     null
                 }
@@ -4546,7 +4547,7 @@ button:hover {
         
         // 현재 로그인한 사용자 ID 가져오기 (로그인 ID 문자열)
         val currentUserId = try {
-            userService.getCurrentUser()?.username
+            SessionManager.getInstance().getCurrentUsername()
         } catch (e: Exception) {
             null
         }
