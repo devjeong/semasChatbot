@@ -45,18 +45,45 @@ class TaskManagementDialog : DialogWrapper(true) {
     private var taskList: List<AssignedTask> = emptyList()
     private var filteredTaskList: List<AssignedTask> = emptyList()
     
+    private var mcpStdioClient: MCPStdioClient? = null
+    
     init {
         title = "작업 관리"
         init()
         
-        // 서버 URL 동기화
+        // 서버 URL 동기화 (stdio 방식에서는 사용되지 않을 수 있지만 호환성을 위해 유지)
         chatService?.let {
             val serverBaseUrl = it.getServerBaseUrl()
             mcpApiClient.setServerBaseUrl(serverBaseUrl)
         }
         
-        // 초기 작업 목록 로드
-        loadTaskList()
+        // MCP 클라이언트 초기화 (stdio 방식)
+        val scriptPath = "C:/dev/workspace/semasChatbotMng/mcp_servers/task_mcp_server.py"
+        val envVars = mapOf(
+            "DB_FILE" to "C:/dev/workspace/semasChatbotMng/auth.db",
+            "MCP_LOG_FILE" to "C:/dev/workspace/semasChatbotMng/logs/task_mcp_server.log"
+        )
+        mcpStdioClient = MCPStdioClient(scriptPath, environment = envVars)
+        
+        // 백그라운드에서 연결 시도
+        Thread {
+            try {
+                mcpStdioClient?.connect()
+                Logger.info("TaskManagementDialog", "MCP Stdio 클라이언트 연결 성공")
+                // 연결 성공 후 작업 목록 로드
+                loadTaskList()
+            } catch (e: Exception) {
+                Logger.error("TaskManagementDialog", "MCP Stdio 연결 실패: ${e.message}")
+                SwingUtilities.invokeLater {
+                    updateStatusLabel("MCP 서버 연결 실패: ${e.message}", Color(231, 76, 60))
+                }
+            }
+        }.start()
+    }
+    
+    override fun dispose() {
+        mcpStdioClient?.disconnect()
+        super.dispose()
     }
     
     override fun createCenterPanel(): JPanel {
@@ -237,35 +264,38 @@ class TaskManagementDialog : DialogWrapper(true) {
             return
         }
         
-        Logger.info("TaskManagementDialog", "작업 목록 조회 시작: username=$username")
+        if (mcpStdioClient == null || !mcpStdioClient!!.isConnected()) {
+            updateStatusLabel("MCP 서버에 연결되지 않았습니다.", Color(231, 76, 60))
+            return
+        }
         
-        updateStatusLabel("작업 목록을 불러오는 중...", Color(52, 152, 219))
+        Logger.info("TaskManagementDialog", "작업 목록 조회 시작 (MCP Stdio): username=$username")
+        
+        updateStatusLabel("작업 목록을 불러오는 중 (MCP Stdio)...", Color(52, 152, 219))
         refreshButton.isEnabled = false
         
         // 백그라운드 스레드에서 API 호출
         Thread {
             try {
-                val (success, tasks) = mcpApiClient.getAssignedTasks(username)
+                // MCP 도구를 통해 작업 목록 조회
+                val tasks = mcpStdioClient!!.getAssignedTasks(username)
                 
                 SwingUtilities.invokeLater {
                     refreshButton.isEnabled = true
                     
-                    if (success) {
-                        taskList = tasks
-                        applyFilters()
-                        updateStatusLabel("작업 목록 조회 완료 (${tasks.size}개)", Color(46, 204, 113))
-                    } else {
-                        taskList = emptyList()
-                        updateTaskTable()
-                        updateStatusLabel("작업 목록 조회 실패", Color(231, 76, 60))
-                        showErrorDialog("작업 목록을 불러오는데 실패했습니다.")
-                    }
+                    taskList = tasks
+                    applyFilters()
+                    updateStatusLabel("작업 목록 조회 완료 (${tasks.size}개)", Color(46, 204, 113))
                 }
             } catch (e: Exception) {
                 SwingUtilities.invokeLater {
                     refreshButton.isEnabled = true
+                    taskList = emptyList()
+                    updateTaskTable()
                     updateStatusLabel("오류 발생: ${e.message}", Color(231, 76, 60))
                     Logger.error("TaskManagementDialog", "작업 목록 로드 오류: ${e.message}")
+                    
+                    showErrorDialog("작업 목록 조회 중 오류가 발생했습니다.\n${e.message}")
                 }
             }
         }.start()

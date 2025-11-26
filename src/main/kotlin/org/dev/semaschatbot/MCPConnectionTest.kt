@@ -9,7 +9,7 @@ import java.io.File
  * 서버 MCP에 연결하고 작업 목록을 조회하는 테스트를 수행합니다.
  */
 object MCPConnectionTest {
-    
+
     /**
      * MCP 서버 연결 테스트를 수행합니다.
      * 
@@ -112,17 +112,11 @@ object MCPConnectionTest {
                 serverScriptPath = serverScriptPath,
                 workingDirectory = File(serverScriptPath).parent,
                 environment = mapOf(
-                    "DB_FILE" to (System.getenv("DB_FILE") ?: "auth.db"),
-                    "MCP_LOG_FILE" to (System.getenv("MCP_LOG_FILE") ?: "./logs/task_mcp_server.log")
-                )
-            )
+                    "DB_FILE" to (System.getenv("DB_FILE") ?: "auth.db")))
             
+            // 5. 연결
+            Logger.info("MCPConnectionTest", "5단계: MCP stdio 클라이언트 연결")
             mcpClient.connect()
-            
-            // 5. 초기화
-            Logger.info("MCPConnectionTest", "5단계: MCP 서버 초기화")
-            val initResponse = mcpClient.initialize()
-            Logger.info("MCPConnectionTest", "초기화 응답: ${initResponse.toString()}")
             
             // 6. 도구 목록 조회
             Logger.info("MCPConnectionTest", "6단계: 도구 목록 조회")

@@ -42,6 +42,9 @@ class MCPStdioClient(
     @Volatile
     private var isConnected = false
     
+    @Volatile
+    private var isInitialized = false
+    
     /**
      * MCP 서버 프로세스를 시작하고 연결합니다.
      */
@@ -71,6 +74,8 @@ class MCPStdioClient(
             
             // 환경 변수 설정
             val env = processBuilder.environment()
+            // UTF-8 인코딩 강제 설정
+            env["PYTHONIOENCODING"] = "utf-8"
             environment.forEach { (key, value) ->
                 env[key] = value
             }
@@ -97,10 +102,14 @@ class MCPStdioClient(
             
             isConnected = true
             Logger.info("MCPStdioClient", "MCP 서버 프로세스 시작 완료")
+            
+            // MCP 프로토콜 초기화 수행
+            initialize()
+            
         } catch (e: Exception) {
-            Logger.error("MCPStdioClient", "MCP 서버 프로세스 시작 실패: ${e.message}")
+            Logger.error("MCPStdioClient", "MCP 서버 연결 실패: ${e.message}")
             disconnect()
-            throw IOException("MCP 서버 프로세스 시작 실패: ${e.message}", e)
+            throw IOException("MCP 서버 연결 실패: ${e.message}", e)
         }
     }
     
@@ -117,6 +126,8 @@ class MCPStdioClient(
                     
                     val trimmed = line.trim()
                     if (trimmed.isEmpty()) continue
+                    
+                    // Logger.debug("MCPStdioClient", "수신: $trimmed")
                     
                     try {
                         val responseJson = gson.fromJson(trimmed, JsonObject::class.java)
@@ -184,19 +195,22 @@ class MCPStdioClient(
      * 
      * @param method JSON-RPC 메서드명
      * @param params 메서드 파라미터
-     * @return JSON 응답 객체
+     * @param isNotification 알림 여부 (true이면 응답을 기다리지 않음)
+     * @return JSON 응답 객체 (알림인 경우 빈 객체 반환)
      */
-    private fun sendJsonRpcRequest(method: String, params: JsonObject? = null): JsonObject {
+    private fun sendJsonRpcRequest(method: String, params: JsonObject? = null, isNotification: Boolean = false): JsonObject {
         if (!isConnected || process == null || stdinWriter == null) {
             throw IOException("MCP 서버에 연결되어 있지 않습니다.")
         }
         
-        val requestId = requestIdCounter.getAndIncrement()
+        val requestId = if (isNotification) null else requestIdCounter.getAndIncrement()
         
         // JSON-RPC 2.0 요청 생성
         val requestJson = JsonObject().apply {
             addProperty("jsonrpc", "2.0")
-            addProperty("id", requestId)
+            if (!isNotification) {
+                addProperty("id", requestId)
+            }
             addProperty("method", method)
             if (params != null) {
                 add("params", params)
@@ -205,9 +219,12 @@ class MCPStdioClient(
         
         val jsonString = gson.toJson(requestJson)
         
-        // 응답 대기 Future 생성
-        val responseFuture = CompletableFuture<JsonObject>()
-        responseFutures[requestId] = responseFuture
+        // 응답 대기 Future 생성 (알림이 아닌 경우에만)
+        val responseFuture = if (!isNotification) CompletableFuture<JsonObject>() else null
+        
+        if (requestId != null && responseFuture != null) {
+            responseFutures[requestId] = responseFuture
+        }
         
         try {
             // stdin으로 요청 전송
@@ -215,19 +232,23 @@ class MCPStdioClient(
             stdinWriter!!.newLine()
             stdinWriter!!.flush()
             
-            Logger.debug("MCPStdioClient", "요청 전송: $method (id=$requestId)")
+            Logger.debug("MCPStdioClient", "전송: $jsonString")
+            
+            if (isNotification) {
+                return JsonObject()
+            }
             
             // 응답 대기 (최대 30초)
-            val response = responseFuture.get(30, TimeUnit.SECONDS)
+            val response = responseFuture!!.get(30, TimeUnit.SECONDS)
             return response
         } catch (e: TimeoutException) {
-            responseFutures.remove(requestId)
+            if (requestId != null) responseFutures.remove(requestId)
             throw IOException("요청 타임아웃: $method", e)
         } catch (e: ExecutionException) {
-            responseFutures.remove(requestId)
+            if (requestId != null) responseFutures.remove(requestId)
             throw IOException("요청 처리 오류: $method", e.cause ?: e)
         } catch (e: Exception) {
-            responseFutures.remove(requestId)
+            if (requestId != null) responseFutures.remove(requestId)
             Logger.error("MCPStdioClient", "JSON-RPC 요청 실패: ${e.message}")
             throw IOException("요청 처리 중 오류: ${e.message}", e)
         }
@@ -235,24 +256,31 @@ class MCPStdioClient(
     
     /**
      * MCP 서버를 초기화합니다.
-     * 
-     * @param clientInfo 클라이언트 정보
-     * @return 초기화 응답
      */
-    fun initialize(clientInfo: MCPClientInfo = MCPClientInfo()): JsonObject {
+    private fun initialize() {
+        Logger.info("MCPStdioClient", "MCP 서버 초기화 시작")
+        
+        // 1. initialize 요청 전송
         val params = JsonObject().apply {
             addProperty("protocolVersion", "2024-11-05")
-            addProperty("capabilities", "{}")
+            add("capabilities", JsonObject())
             add("clientInfo", JsonObject().apply {
-                addProperty("name", clientInfo.name)
-                addProperty("version", clientInfo.version)
+                addProperty("name", "semasChatbot")
+                addProperty("version", "1.0.0")
             })
         }
         
-        Logger.info("MCPStdioClient", "MCP 서버 초기화 시작")
         val response = sendJsonRpcRequest("initialize", params)
+        
+        // 2. 응답 확인 (에러 체크는 sendJsonRpcRequest에서 처리됨)
+        Logger.info("MCPStdioClient", "initialize 응답 수신 완료")
+        
+        // 3. initialized 알림 전송
+        sendJsonRpcRequest("notifications/initialized", null, true)
+        Logger.info("MCPStdioClient", "initialized 알림 전송 완료")
+        
+        isInitialized = true
         Logger.info("MCPStdioClient", "MCP 서버 초기화 완료")
-        return response
     }
     
     /**
@@ -261,6 +289,10 @@ class MCPStdioClient(
      * @return 도구 목록
      */
     fun listTools(): List<JsonObject> {
+        if (!isInitialized) {
+            throw IllegalStateException("서버가 초기화되지 않았습니다.")
+        }
+        
         Logger.info("MCPStdioClient", "도구 목록 조회 시작")
         val response = sendJsonRpcRequest("tools/list")
         
@@ -286,6 +318,10 @@ class MCPStdioClient(
      * @return 도구 실행 결과
      */
     fun callTool(toolName: String, arguments: JsonObject): JsonObject {
+        if (!isInitialized) {
+            throw IllegalStateException("서버가 초기화되지 않았습니다.")
+        }
+        
         Logger.info("MCPStdioClient", "도구 호출: $toolName")
         
         val params = JsonObject().apply {
@@ -320,49 +356,78 @@ class MCPStdioClient(
         }
         
         val result = callTool("get_assigned_tasks", arguments)
+        Logger.debug("MCPStdioClient", "도구 실행 결과: $result")
         
         // 결과 파싱
-        val content = result.getAsJsonArray("content")
         val taskList = mutableListOf<AssignedTask>()
         
-        content.forEach { item ->
-            if (item.isJsonObject) {
-                val itemObj = item.asJsonObject
-                val text = itemObj.get("text")?.asString ?: ""
-                
-                // JSON 문자열 파싱
-                try {
-                    val taskJson = gson.fromJson(text, JsonObject::class.java)
-                    val data = taskJson.getAsJsonArray("data")
+        try {
+            // content 필드 확인
+            if (!result.has("content") || result.get("content").isJsonNull) {
+                Logger.warn("MCPStdioClient", "응답에 content 필드가 없거나 null입니다.")
+                return emptyList()
+            }
+            
+            val content = result.getAsJsonArray("content")
+            
+            content.forEach { item ->
+                if (item.isJsonObject) {
+                    val itemObj = item.asJsonObject
                     
-                    data.forEach { taskElement ->
-                        if (taskElement.isJsonObject) {
-                            val taskObj = taskElement.asJsonObject
-                            val task = AssignedTask(
-                                id = taskObj.get("id")?.asInt ?: 0,
-                                requirementId = taskObj.get("requirement_id")?.asInt,
-                                requirementTitle = taskObj.get("requirement_title")?.asString,
-                                taskNumber = taskObj.get("task_number")?.asInt,
-                                title = taskObj.get("title")?.asString ?: "",
-                                description = taskObj.get("description")?.asString,
-                                status = taskObj.get("status")?.asString ?: "PENDING",
-                                priority = taskObj.get("priority")?.asString,
-                                estimatedHours = taskObj.get("estimated_hours")?.asDouble,
-                                actualHours = taskObj.get("actual_hours")?.asDouble,
-                                assigneeName = taskObj.get("assignee_name")?.asString,
-                                startDate = taskObj.get("start_date")?.asString,
-                                dueDate = taskObj.get("due_date")?.asString,
-                                completedDate = taskObj.get("completed_date")?.asString,
-                                createdAt = taskObj.get("created_at")?.asString,
-                                updatedAt = taskObj.get("updated_at")?.asString
-                            )
-                            taskList.add(task)
+                    // text 필드 확인
+                    if (itemObj.has("text") && !itemObj.get("text").isJsonNull) {
+                        val textElement = itemObj.get("text")
+                        val text = if (textElement.isJsonPrimitive && textElement.asJsonPrimitive.isString) {
+                            textElement.asString
+                        } else {
+                            textElement.toString()
+                        }
+                        
+                        Logger.debug("MCPStdioClient", "파싱할 텍스트: $text")
+                        
+                        // JSON 문자열 파싱
+                        try {
+                            val taskJson = gson.fromJson(text, JsonObject::class.java)
+                            
+                            // data 필드 확인
+                            if (taskJson.has("data") && !taskJson.get("data").isJsonNull) {
+                                val data = taskJson.getAsJsonArray("data")
+                                
+                                data.forEach { taskElement ->
+                                    if (taskElement.isJsonObject) {
+                                        val taskObj = taskElement.asJsonObject
+                                        val task = AssignedTask(
+                                            id = taskObj.get("id")?.asInt ?: 0,
+                                            requirementId = if (taskObj.has("requirement_id") && !taskObj.get("requirement_id").isJsonNull) taskObj.get("requirement_id").asInt else null,
+                                            requirementTitle = if (taskObj.has("requirement_title") && !taskObj.get("requirement_title").isJsonNull) taskObj.get("requirement_title").asString else null,
+                                            taskNumber = if (taskObj.has("task_number") && !taskObj.get("task_number").isJsonNull) taskObj.get("task_number").asInt else null,
+                                            title = if (taskObj.has("title") && !taskObj.get("title").isJsonNull) taskObj.get("title").asString else "",
+                                            description = if (taskObj.has("description") && !taskObj.get("description").isJsonNull) taskObj.get("description").asString else null,
+                                            status = if (taskObj.has("status") && !taskObj.get("status").isJsonNull) taskObj.get("status").asString else "PENDING",
+                                            priority = if (taskObj.has("priority") && !taskObj.get("priority").isJsonNull) taskObj.get("priority").asString else null,
+                                            estimatedHours = if (taskObj.has("estimated_hours") && !taskObj.get("estimated_hours").isJsonNull) taskObj.get("estimated_hours").asDouble else null,
+                                            actualHours = if (taskObj.has("actual_hours") && !taskObj.get("actual_hours").isJsonNull) taskObj.get("actual_hours").asDouble else null,
+                                            assigneeName = if (taskObj.has("assignee_name") && !taskObj.get("assignee_name").isJsonNull) taskObj.get("assignee_name").asString else null,
+                                            startDate = if (taskObj.has("start_date") && !taskObj.get("start_date").isJsonNull) taskObj.get("start_date").asString else null,
+                                            dueDate = if (taskObj.has("due_date") && !taskObj.get("due_date").isJsonNull) taskObj.get("due_date").asString else null,
+                                            completedDate = if (taskObj.has("completed_date") && !taskObj.get("completed_date").isJsonNull) taskObj.get("completed_date").asString else null,
+                                            createdAt = if (taskObj.has("created_at") && !taskObj.get("created_at").isJsonNull) taskObj.get("created_at").asString else null,
+                                            updatedAt = if (taskObj.has("updated_at") && !taskObj.get("updated_at").isJsonNull) taskObj.get("updated_at").asString else null
+                                        )
+                                        taskList.add(task)
+                                    }
+                                }
+                            } else {
+                                Logger.warn("MCPStdioClient", "응답 JSON에 data 필드가 없습니다: $text")
+                            }
+                        } catch (e: Exception) {
+                            Logger.error("MCPStdioClient", "JSON 텍스트 파싱 오류: ${e.message}")
                         }
                     }
-                } catch (e: Exception) {
-                    Logger.error("MCPStdioClient", "작업 목록 파싱 오류: ${e.message}")
                 }
             }
+        } catch (e: Exception) {
+            Logger.error("MCPStdioClient", "작업 목록 전체 파싱 오류: ${e.message}")
         }
         
         Logger.info("MCPStdioClient", "작업 목록 조회 완료: ${taskList.size}개")
@@ -378,6 +443,7 @@ class MCPStdioClient(
         }
         
         isConnected = false
+        isInitialized = false
         
         try {
             // 스트림 닫기
@@ -405,7 +471,7 @@ class MCPStdioClient(
      * 연결 상태를 확인합니다.
      */
     fun isConnected(): Boolean {
-        return isConnected && process?.isAlive == true
+        return isConnected && isInitialized && process?.isAlive == true
     }
 }
 
