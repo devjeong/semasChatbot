@@ -955,33 +955,33 @@ class ChatService(private val project: Project) {
      */
     private fun createMessagePanel(message: String, isUser: Boolean): JPanel {
         val containerPanel = JPanel(BorderLayout())
-        containerPanel.background = Color.WHITE
+        containerPanel.background = Color(30, 30, 30) // #1E1E1E - Copilot 다크 배경
         containerPanel.border = EmptyBorder(0, 0, 0, 0)
         
         val messageWrapper = JPanel(FlowLayout(if (isUser) FlowLayout.RIGHT else FlowLayout.LEFT, 7, 0))
-        messageWrapper.background = Color.WHITE
+        messageWrapper.background = Color(30, 30, 30) // #1E1E1E
         messageWrapper.border = EmptyBorder(0, 0, 0, 0)
         
         val messagePanel = JPanel(BorderLayout())
         val messageText = JTextArea(message)
 
         if (isUser) {
-            // 사용자 메시지 (우측, 파란색)
-            messagePanel.background = Color(52, 152, 219)
-            messageText.background = Color(52, 152, 219)
+            // 사용자 메시지 (우측, Copilot 보라색)
+            messagePanel.background = Color(139, 92, 246) // #8B5CF6
+            messageText.background = Color(139, 92, 246)
             messageText.foreground = Color.WHITE
             messagePanel.border = CompoundBorder(
-                LineBorder(Color(41, 128, 185), 1, true),
-                EmptyBorder(6, 10, 6, 10)
+                LineBorder(Color(124, 58, 237), 1, true), // #7C3AED - 진한 보라색 테두리
+                EmptyBorder(8, 12, 8, 12)
             )
         } else {
-            // AI 메시지 (좌측, 회색)
-            messagePanel.background = Color(236, 240, 241)
-            messageText.background = Color(236, 240, 241)
-            messageText.foreground = Color(44, 62, 80)
+            // AI 메시지 (좌측, 어두운 회색)
+            messagePanel.background = Color(45, 45, 45) // #2D2D2D
+            messageText.background = Color(45, 45, 45)
+            messageText.foreground = Color(220, 220, 220) // 밝은 회색 텍스트
             messagePanel.border = CompoundBorder(
-                LineBorder(Color(189, 195, 199), 1, true),
-                EmptyBorder(6, 10, 6, 10)
+                LineBorder(Color(60, 60, 60), 1, true), // 어두운 테두리
+                EmptyBorder(8, 12, 8, 12)
             )
         }
         
@@ -1007,7 +1007,7 @@ class ChatService(private val project: Project) {
         
         // 텍스트 내용에 따른 동적 크기 계산
         val textMetrics = messageText.getFontMetrics(messageText.font)
-        val maxWidth = 450  // 최대 너비 확대
+        val maxWidth = 800  // 최대 너비 대폭 확대 (450 → 800)
         val minWidth = 100
         val maxHeight = 400  // 메시지 패널 최대 높이 제한
         val buttonHeight = if (hasApplyButton) 28 else 0  // 버튼 높이 추가
@@ -1111,25 +1111,25 @@ class ChatService(private val project: Project) {
      */
     private fun createApplyButtonPanel(message: String): JPanel {
         val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 3, 3))
-        buttonPanel.background = Color(236, 240, 241)
-        buttonPanel.preferredSize = Dimension(450, 28)  // 메시지 패널 전체 너비에 맞춤
-        buttonPanel.maximumSize = Dimension(450, 28)
+        buttonPanel.background = Color(45, 45, 45) // #2D2D2D - AI 메시지 배경과 동일
+        buttonPanel.preferredSize = Dimension(800, 28)  // 메시지 패널 전체 너비에 맞춤 (450 → 800)
+        buttonPanel.maximumSize = Dimension(800, 28)
         buttonPanel.minimumSize = Dimension(100, 28)
         
         // 포맷팅 옵션 체크박스
         val formatCheckBox = JCheckBox("포맷팅", true)
         formatCheckBox.font = Font("SansSerif", Font.PLAIN, 9)
-        formatCheckBox.background = Color(236, 240, 241)
-        formatCheckBox.foreground = Color(44, 62, 80)
+        formatCheckBox.background = Color(45, 45, 45) // #2D2D2D
+        formatCheckBox.foreground = Color(220, 220, 220) // 밝은 회색 텍스트
         formatCheckBox.toolTipText = "코드 적용 후 자동 포맷팅 실행"
         formatCheckBox.preferredSize = Dimension(55, 22)
         
         val applyButton = JButton("적용")
         applyButton.font = Font("SansSerif", Font.BOLD, 10)
         applyButton.foreground = Color.WHITE
-        applyButton.background = Color(52, 152, 219)
+        applyButton.background = Color(139, 92, 246) // #8B5CF6 - Copilot 보라색
         applyButton.border = CompoundBorder(
-            LineBorder(Color(41, 128, 185), 1, true),
+            LineBorder(Color(124, 58, 237), 1, true), // #7C3AED
             EmptyBorder(3, 8, 3, 8)
         )
         applyButton.isFocusPainted = false

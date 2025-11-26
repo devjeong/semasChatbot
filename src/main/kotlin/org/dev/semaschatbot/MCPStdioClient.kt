@@ -435,6 +435,63 @@ class MCPStdioClient(
     }
     
     /**
+     * 작업 정보를 업데이트합니다.
+     * 
+     * @param taskId 작업 ID
+     * @param status 상태 (선택)
+     * @param startDate 시작일 (선택, YYYY-MM-DD 형식)
+     * @param dueDate 마감일 (선택, YYYY-MM-DD 형식)
+     * @param actualHours 실제 소요 시간 (선택)
+     * @return 업데이트 성공 여부
+     */
+    fun updateTask(
+        taskId: Int,
+        status: String? = null,
+        startDate: String? = null,
+        dueDate: String? = null,
+        actualHours: Double? = null
+    ): Boolean {
+        val arguments = JsonObject().apply {
+            addProperty("task_id", taskId)
+            status?.let { addProperty("status", it) }
+            startDate?.let { addProperty("start_date", it) }
+            dueDate?.let { addProperty("due_date", it) }
+            actualHours?.let { addProperty("actual_hours", it) }
+        }
+        
+        Logger.info("MCPStdioClient", "작업 업데이트 시작: taskId=$taskId")
+        
+        try {
+            val result = callTool("update_task", arguments)
+            Logger.debug("MCPStdioClient", "작업 업데이트 결과: $result")
+            
+            // 결과 파싱
+            if (result.has("content") && !result.get("content").isJsonNull) {
+                val content = result.getAsJsonArray("content")
+                if (content.size() > 0) {
+                    val firstItem = content.get(0).asJsonObject
+                    if (firstItem.has("text")) {
+                        val text = firstItem.get("text").asString
+                        val responseJson = gson.fromJson(text, JsonObject::class.java)
+                        
+                        if (responseJson.has("success")) {
+                            val success = responseJson.get("success").asBoolean
+                            Logger.info("MCPStdioClient", "작업 업데이트 완료: success=$success")
+                            return success
+                        }
+                    }
+                }
+            }
+            
+            Logger.warn("MCPStdioClient", "작업 업데이트 응답 형식이 올바르지 않습니다")
+            return false
+        } catch (e: Exception) {
+            Logger.error("MCPStdioClient", "작업 업데이트 오류: ${e.message}")
+            throw IOException("작업 업데이트 실패: ${e.message}", e)
+        }
+    }
+    
+    /**
      * 연결을 해제하고 프로세스를 종료합니다.
      */
     fun disconnect() {

@@ -46,21 +46,21 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
 
         // 툴 윈도우의 메인 패널을 생성합니다. BorderLayout을 사용하여 컴포넌트들을 배치합니다.
         val panel = JPanel(BorderLayout())
-        panel.background = Color(245, 245, 245) // 패널의 배경색을 연한 회색으로 설정합니다.
+        panel.background = Color(30, 30, 30) // #1E1E1E - Copilot 다크 배경
         panel.preferredSize = Dimension(500, 700)  // 툴 윈도우 기본 크기 설정
         panel.minimumSize = Dimension(400, 500)    // 최소 크기 설정
 
         // 메신저 스타일의 채팅 패널을 생성합니다.
         val chatPanel = JPanel()
         chatPanel.layout = BoxLayout(chatPanel, BoxLayout.Y_AXIS)
-        chatPanel.background = Color.WHITE
+        chatPanel.background = Color(30, 30, 30) // #1E1E1E - Copilot 다크 배경
         chatPanel.border = EmptyBorder(10, 12, 10, 12)
         
         val scrollPane = JBScrollPane(chatPanel)
         scrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
         scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
-        scrollPane.background = Color.WHITE
-        scrollPane.border = LineBorder(Color(220, 220, 220), 1)
+        scrollPane.background = Color(30, 30, 30) // #1E1E1E
+        scrollPane.border = LineBorder(Color(60, 60, 60), 1) // 어두운 테두리
         
         // 스크롤 패널 크기 설정 개선
         scrollPane.preferredSize = Dimension(400, 500)  // 기본 크기 설정
@@ -74,7 +74,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
 
         // 사용자 입력을 위한 패널과 컴포넌트들을 생성합니다.
         val inputPanel = JPanel(BorderLayout()) // 입력 필드와 버튼을 포함할 패널입니다.
-        inputPanel.background = Color(245, 245, 245)
+        inputPanel.background = Color(30, 30, 30) // #1E1E1E - Copilot 다크 배경
         inputPanel.border = EmptyBorder(5, 10, 10, 10)
         
         val loadingLabel = JLabel("⏳ 로딩 중...") // 로딩 인디케이터 레이블 생성
@@ -92,26 +92,27 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         inputField.rows = 4  // 입력 필드 높이 증가
         inputField.lineWrap = true
         inputField.wrapStyleWord = true
-        inputField.background = Color.WHITE
-        inputField.foreground = Color.BLACK
+        inputField.background = Color(45, 45, 45) // #2D2D2D - 입력 필드 다크 배경
+        inputField.foreground = Color(220, 220, 220) // 밝은 회색 텍스트
         inputField.font = Font("SansSerif", Font.PLAIN, 14)
+        inputField.caretColor = Color(167, 139, 250) // 보라색 커서
         
         val inputScrollPane = JBScrollPane(inputField)
         inputScrollPane.border = CompoundBorder(
-            LineBorder(Color(200, 200, 200), 1, true),
+            LineBorder(Color(139, 92, 246), 1, true), // #8B5CF6 - Copilot 보라색 테두리
             EmptyBorder(10, 15, 10, 15)  // 입력 필드 패딩 증가
         )
         inputScrollPane.preferredSize = Dimension(350, 120)  // 입력 필드 크기 설정
         inputScrollPane.minimumSize = Dimension(200, 80)     // 최소 크기 설정
-        // 모던한 스타일의 버튼들을 생성합니다.
-        val sendButton = createStyledButton("📤 전송", Color(52, 152, 219), Color.WHITE)
-        val resetButton = createStyledButton("🔄 초기화", Color(231, 76, 60), Color.WHITE)
-        val promptButton = createStyledButton("⚙️ 프롬프트", Color(155, 89, 182), Color.WHITE)
-        val urlButton = createStyledButton("🌐 URL", Color(241, 196, 15), Color.WHITE)
-        val analyzeFileButton = createStyledButton("📄 전체 분석", Color(46, 204, 113), Color.WHITE)
-        val logButton = createStyledButton("📋 로그", Color(142, 68, 173), Color.WHITE)
-        val mcpButton = createStyledButton("🔌 MCP 관리", Color(52, 152, 219), Color.WHITE)
-        val taskButton = createStyledButton("📋 작업관리", Color(46, 204, 113), Color.WHITE)
+        // Copilot 스타일의 버튼들을 생성합니다 - 보라색 액센트 사용
+        val sendButton = createStyledButton("📤 전송", Color(139, 92, 246), Color.WHITE) // #8B5CF6
+        val resetButton = createStyledButton("🔄 초기화", Color(100, 100, 100), Color.WHITE)
+        val promptButton = createStyledButton("⚙️ 프롬프트", Color(167, 139, 250), Color.WHITE) // #A78BFA
+        val urlButton = createStyledButton("🌐 URL", Color(167, 139, 250), Color.WHITE)
+        val analyzeFileButton = createStyledButton("📄 전체 분석", Color(167, 139, 250), Color.WHITE)
+        val logButton = createStyledButton("📋 로그", Color(100, 100, 100), Color.WHITE)
+        val mcpButton = createStyledButton("🔌 MCP 관리", Color(139, 92, 246), Color.WHITE)
+        val taskButton = createStyledButton("📋 작업관리", Color(139, 92, 246), Color.WHITE)
         
         // 작업관리 버튼은 항상 활성화
         taskButton.isEnabled = true
@@ -121,22 +122,22 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         val headerPanel = createHeaderPanel(chatService)
         
         val topPanel = JPanel(BorderLayout())
-        topPanel.background = Color(245, 245, 245)
+        topPanel.background = Color(30, 30, 30) // #1E1E1E
         topPanel.border = EmptyBorder(5, 10, 5, 10)
         topPanel.add(headerPanel, BorderLayout.NORTH)
         
         val buttonContainerPanel = JPanel(BorderLayout())
-        buttonContainerPanel.background = Color(245, 245, 245)
+        buttonContainerPanel.background = Color(30, 30, 30) // #1E1E1E
         
         val leftButtonPanel = JPanel(FlowLayout(FlowLayout.LEFT, 5, 0))
-        leftButtonPanel.background = Color(245, 245, 245)
+        leftButtonPanel.background = Color(30, 30, 30) // #1E1E1E
         leftButtonPanel.add(promptButton)
         leftButtonPanel.add(urlButton)
         /*leftButtonPanel.add(analyzeFileButton)*/
         buttonContainerPanel.add(leftButtonPanel, BorderLayout.WEST)
         
         val rightButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 0))
-        rightButtonPanel.background = Color(245, 245, 245)
+        rightButtonPanel.background = Color(30, 30, 30) // #1E1E1E
         rightButtonPanel.add(taskButton)
         rightButtonPanel.add(mcpButton)
         rightButtonPanel.add(logButton)
@@ -148,11 +149,11 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         
         // 버튼들을 입력창 아래쪽에 배치하는 패널
         val bottomButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 5))
-        bottomButtonPanel.background = Color(245, 245, 245)
+        bottomButtonPanel.background = Color(30, 30, 30) // #1E1E1E
         // 모델 선택 콤보박스 (하단 입력란 아래, 초기화 버튼 옆)
         val modelLabel = JLabel("모델:")
         modelLabel.font = Font("SansSerif", Font.BOLD, 11)
-        modelLabel.foreground = Color(80, 80, 80)
+        modelLabel.foreground = Color(167, 139, 250) // #A78BFA - Copilot 보라색
         // Gemini 모델과 로컬 모델을 함께 표시
         val initialModels = mutableListOf<String>()
         initialModels.add("default-model") // 기본 로컬 모델
@@ -174,7 +175,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         fileInfoLabel.isOpaque = true
 
         val southPanel = JPanel(BorderLayout())
-        southPanel.background = Color(245, 245, 245)
+        southPanel.background = Color(30, 30, 30) // #1E1E1E
         southPanel.add(fileInfoLabel, BorderLayout.NORTH) // 파일 정보 레이블을 입력 패널 위에 추가
         southPanel.add(inputPanel, BorderLayout.CENTER)
 
@@ -524,17 +525,17 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
     }
 
     /**
-     * 모던한 스타일의 헤더 패널을 생성하는 함수입니다.
+     * Copilot 스타일의 헤더 패널을 생성하는 함수입니다.
      * @return 스타일이 적용된 헤더 JPanel
      */
     private fun createHeaderPanel(chatService: ChatService): JPanel {
         val headerPanel = JPanel(BorderLayout())
-        headerPanel.background = Color(173, 216, 230)
+        headerPanel.background = Color(45, 45, 45) // #2D2D2D - Copilot 헤더 배경
         headerPanel.border = EmptyBorder(12, 15, 12, 15)
         
         // 아이콘과 제목을 포함하는 왼쪽 패널
         val titlePanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
-        titlePanel.background = Color(173, 216, 230)
+        titlePanel.background = Color(45, 45, 45) // #2D2D2D
         
         // 아이콘 레이블 - IntelliJ IconLoader 사용
         val iconLabel = try {
@@ -568,13 +569,13 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         titleLabel.font = Font("SansSerif", Font.BOLD, 16)
         titlePanel.add(titleLabel)
         
-        // 베타 배지
+        // 베타 배지 - Copilot 보라색 액센트
         val betaBadge = JLabel("Beta")
-        betaBadge.foreground = Color(52, 152, 219)
-        betaBadge.background = Color.WHITE
+        betaBadge.foreground = Color.WHITE
+        betaBadge.background = Color(139, 92, 246) // #8B5CF6 - Copilot 보라색
         betaBadge.font = Font("SansSerif", Font.BOLD, 10)
         betaBadge.border = CompoundBorder(
-            LineBorder(Color.WHITE, 1, true),
+            LineBorder(Color(139, 92, 246), 1, true),
             EmptyBorder(2, 6, 2, 6)
         )
         betaBadge.isOpaque = true
@@ -584,7 +585,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         
         // 상태 표시 (우측) - 로그인한 사용자 정보 표시
         val statusPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
-        statusPanel.background = Color(173, 216, 230)
+        statusPanel.background = Color(45, 45, 45) // #2D2D2D
         
         // 로그인한 사용자 정보 가져오기 (SessionManager 사용)
         val currentUser = try {
@@ -600,7 +601,7 @@ class LLMChatToolWindowFactory : ToolWindowFactory {
         }
         
         val statusLabel = JLabel(statusText)
-        statusLabel.foreground = if (currentUser != null) Color(46, 204, 113) else Color(149, 165, 166)
+        statusLabel.foreground = if (currentUser != null) Color(167, 139, 250) else Color(120, 120, 120) // 보라색 또는 회색
         statusLabel.font = Font("SansSerif", Font.PLAIN, 12)
         statusPanel.add(statusLabel)
         
